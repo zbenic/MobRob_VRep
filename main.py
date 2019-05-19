@@ -17,6 +17,7 @@ import subprocess
 import time
 import array
 from PIL import Image
+from numpy.linalg import norm
 import numpy as np
 
 try:
@@ -29,6 +30,62 @@ except:
     print('or appropriately adjust the file "vrep.py"')
     print('--------------------------------------------------------------')
     print('')
+
+
+def initMotors(clientId, numberOfMotors:int = 2):
+    errorCodeMotors = []
+    motors = []
+    motorNaming = {0: 'leftMotor',
+                   1: 'rightMotor'}
+
+    for motorIdx in range(numberOfMotors):
+        errorCodeMotor, motor = vrep.simxGetObjectHandle(clientId, motorNaming[motorIdx], vrep.simx_opmode_oneshot_wait)
+        errorCodeMotors.append(errorCodeMotor)
+        motors.append(motor)
+
+    return errorCodeMotors, motors
+
+
+def initProxSensors(clientId, numberOfSensors:int = 6):
+    errorCodeProxSensors = []
+    proxSensors = []
+
+    for proxSensorIdx in range(numberOfSensors):
+        proxSensorName = "proximitySensor" + str(proxSensorIdx)
+        errorCode, proximitySensor = vrep.simxGetObjectHandle(clientId, proxSensorName, vrep.simx_opmode_oneshot_wait)
+        errorCodeProxSensors.append(errorCode)
+        proxSensors.append(proximitySensor)
+
+    return errorCodeProxSensors, proxSensors
+
+
+def calculateDistance(sensorReading):
+    return norm(sensorReading)
+
+
+def getProximitySensorsReadings(clientId, proxSensors, vrepMode = vrep.simx_opmode_buffer):
+    errorCodes = []
+    detectionStates = []
+    detectedPoints = []
+
+    for proxSensor in proxSensors:
+        err_code, detectionState, detectedPoint, _, _ = vrep.simxReadProximitySensor(clientId, proxSensor, vrepMode)
+        errorCodes.append(err_code)
+        detectionStates.append(detectionStates)
+        detectedPoints.append(detectedPoint)
+
+    return errorCodes, detectionStates, detectedPoints
+
+
+def setMotorsForces(clientId, motors, leftMotorForce, rightMotorForce):
+    vrep.simxSetJointForce(clientId, motors[0], leftMotorForce, vrep.simx_opmode_oneshot)  # set the left joint force/torque
+    vrep.simxSetJointForce(clientId, motors[1], rightMotorForce, vrep.simx_opmode_oneshot)  # set the right joint force/torque
+
+
+def setMotorsTargetVelocities(clientId, motors, leftMotorTargetVelocity, rightMotorTargetVelocity):
+    vrep.simxSetJointTargetVelocity(clientId, motors[0], leftMotorTargetVelocity, vrep.simx_opmode_oneshot) # set the joint target velocity
+    vrep.simxSetJointTargetVelocity(clientId, motors[1], rightMotorTargetVelocity, vrep.simx_opmode_oneshot) # set the joint target velocity
+
 
 subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'G:/GIT/MobRob/Scene/labScene.ttt'])
 time.sleep(10)
@@ -45,34 +102,28 @@ else:
 
 startTime = time.time()
 
-errorCodeMotorLeft, leftMotor = vrep.simxGetObjectHandle(clientId, "leftMotor", vrep.simx_opmode_oneshot_wait)
-errorCodeMotorRight, rightMotor = vrep.simxGetObjectHandle(clientId, "rightMotor", vrep.simx_opmode_oneshot_wait)
-errorCodeCamera, frontRobotCamera = vrep.simxGetObjectHandle(clientId, 'frontRobotCamera', vrep.simx_opmode_oneshot_wait)
+errorCodeMotors, motors = initMotors(clientId)
+# errorCodeCamera, frontRobotCamera = vrep.simxGetObjectHandle(clientId, 'frontRobotCamera', vrep.simx_opmode_oneshot_wait)
+errorCodeInitProxSensors, proxSensors = initProxSensors(clientId)
 
 vrep.simxSynchronous(clientId, 1) # enable the synchronous mode (client side). The server side (i.e. V-REP) also needs to be enabled.
 vrep.simxStartSimulation(clientId, vrep.simx_opmode_oneshot) # start the simulation
-vrep.simxSetJointForce(clientId, leftMotor, 1.0, vrep.simx_opmode_oneshot) # set the joint force/torque
-vrep.simxSetJointForce(clientId, rightMotor, 1.0, vrep.simx_opmode_oneshot) # set the joint force/torque
+
+# TODO: set joint force/torque from EMIR documentation
+setMotorsForces(clientId, motors, 100, 100)
 
 simStep = 0
-errorCodeCameraImage, frontCameraResolution, frontCameraImage = vrep.simxGetVisionSensorImage(clientId, frontRobotCamera, 0, vrep.simx_opmode_streaming)
+# errorCodeCameraImage, frontCameraResolution, frontCameraImage = vrep.simxGetVisionSensorImage(clientId, frontRobotCamera, 0, vrep.simx_opmode_streaming)
 
-while(simStep < 100):
-    vrep.simxSetJointTargetVelocity(clientId, leftMotor, 5, vrep.simx_opmode_oneshot) # set the joint target velocity
-    vrep.simxSetJointTargetVelocity(clientId, rightMotor, 5, vrep.simx_opmode_oneshot) # set the joint target velocity
+errorCodeProxSensors, detectionStates, detectedPoints = getProximitySensorsReadings(clientId, proxSensors, vrep.simx_opmode_streaming)
+
+while simStep < 10000:
+    vrep.simxSetJointTargetVelocity(clientId, motors[0], 5, vrep.simx_opmode_oneshot) # set the joint target velocity
+    vrep.simxSetJointTargetVelocity(clientId, motors[1], 5, vrep.simx_opmode_oneshot) # set the joint target velocity
+
+    errorCodeProx, detectionStatesProx, detectedPointsProx = getProximitySensorsReadings(clientId, proxSensors)
+
     vrep.simxSynchronousTrigger(clientId) # trigger next simulation step. Above commands will be applied
-
-    errorCodeCameraImage, frontCameraResolution, frontCameraImage = vrep.simxGetVisionSensorImage(clientId, frontRobotCamera, 0, vrep.simx_opmode_buffer)
-    if errorCodeCameraImage == vrep.simx_return_ok:
-        img = np.array(frontCameraImage, dtype=np.uint8)
-        img = img.reshape([frontCameraResolution[1], frontCameraResolution[0], 3])
-        img = Image.fromarray(img, 'RGB')
-        img.save('my.png')
-        img.show()
-
-    # this should return image to camera. See https://github.com/nemilya/vrep-api-python-opencv/blob/master/handle_vision_sensor.py
-    # if errorCodeCameraImage == vrep.simx_return_ok:
-    #     errorCodeCameraImage = vrep.simxSetVisionSensorImage(clientId, v1, image, 0, vrep.simx_opmode_oneshot)
 
     simStep += 1
 
@@ -88,3 +139,17 @@ vrep.simxFinish(clientId)
 
 
 print ('Program ended')
+
+
+
+# errorCodeCameraImage, frontCameraResolution, frontCameraImage = vrep.simxGetVisionSensorImage(clientId, frontRobotCamera, 0, vrep.simx_opmode_buffer)
+# if errorCodeCameraImage == vrep.simx_return_ok:
+#     img = np.array(frontCameraImage, dtype=np.uint8)
+#     img = img.reshape([frontCameraResolution[1], frontCameraResolution[0], 3])
+#     img = Image.fromarray(img, 'RGB')
+# img.save('my.png')
+# img.show()
+
+# this should return image to camera. See https://github.com/nemilya/vrep-api-python-opencv/blob/master/handle_vision_sensor.py
+# if errorCodeCameraImage == vrep.simx_return_ok:
+#     errorCodeCameraImage = vrep.simxSetVisionSensorImage(clientId, v1, image, 0, vrep.simx_opmode_oneshot)

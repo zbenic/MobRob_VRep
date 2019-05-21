@@ -39,7 +39,8 @@ train = True
 simulate = False
 plot = False
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 print("Torch will use " + device.__str__() + " as device.")
 
 # Based on http://math.stackexchange.com/questions/1287634/implementing-ornstein-uhlenbeck-in-matlab
@@ -477,6 +478,7 @@ class LabEnv:
         self.clientId = -1
         self.mobRob = MobRob
         self.tolerance = 0.1
+        self.chassisCollisionHandle = -1
 
     def init(self):
         subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE',
@@ -495,17 +497,20 @@ class LabEnv:
 
         self.mobRob.clientId = self.clientId
         self.initSimulationObjects()
+        self.mobRob.mobRobHandle = vrep.simxGetObjectHandle(self.clientId, "MobRob", vrep.simx_opmode_blocking)
+        self.chassisCollisionHandle = vrep.simxGetCollisionHandle(self.clientId, "MobRobChassis",
+                                                                  vrep.simx_opmode_blocking)
 
     def initSimulationObjects(self):
         self.mobRob.initMotors()
         self.mobRob.initProxSensors()
 
-    def restart(self):
 
-        errorCodeProx, detectionStatesProx, detectedDistances = self.mobRob.getState()
+    def restart(self):
+        state = self.mobRob.getState()
         self.stop()
         self.start()
-        return errorCodeProx, detectionStatesProx, detectedDistances
+        return state
 
     def computeReward(self, state, desiredState):
         done = False
@@ -530,6 +535,10 @@ class LabEnv:
 
         return state, reward, done
 
+    def getCollision(self, vrepMode=vrep.simx_opmode_buffer):
+        _, collisionOccured = vrep.simxReadCollision(self.clientId, "MobRobChassis", vrepMode)
+        return collisionOccured
+
     def start(self):
         vrep.simxStartSimulation(self.clientId, vrep.simx_opmode_oneshot)  # start the simulation
 
@@ -550,6 +559,7 @@ class MobRob:
         self.robotName = robotName
         self.motorsNaming = motorsNaming
         self.proxSensorsNaming = proxSensorsNaming
+        self.mobRobHandle = -1
         self.initMotors()
         self.initProxSensors()
 
@@ -577,15 +587,15 @@ class MobRob:
         return state  # x, y, yawAngle, vx, vy, yawVel, proxySensor0...proxySensor5
 
     def getPosition(self, vrepMode):
-        _, position = vrep.simxGetObjectPosition(self.clientId, self.robotName, -1, vrepMode)
+        _, position = vrep.simxGetObjectPosition(self.clientId, self.mobRobHandle, -1, vrepMode)
         return position[1:] # returns x and y coordinates
 
     def getOrientation(self, vrepMode):
-        _, orientation = vrep.simxGetObjectOrientation(self.clientId, self.robotName, -1, vrepMode)
+        _, orientation = vrep.simxGetObjectOrientation(self.clientId, self.mobRobHandle, -1, vrepMode)
         return orientation[-1] # returns yaw angle
 
     def getVelocities(self, vrepMode):
-        _, linear, angular = vrep.simxGetObjectVelocity(self.clientId, self.robotName, vrepMode)
+        _, linear, angular = vrep.simxGetObjectVelocity(self.clientId, self.mobRobHandle, vrepMode)
         velocities = linear[1:]
         velocities.append((angular[-1]))
         return velocities # returns vx, vy and yawVel
@@ -635,7 +645,7 @@ def main():
 
     state_dim = 6  # TODO: simulate battery? 6 are the number of proxy sensors
     action_dim = 2
-    action_lim = env.action_space.high[0]
+    action_lim = [2, 2]  # 2 o/sec is the max angular speed of each motor
 
     if train:
         dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate)
@@ -658,7 +668,7 @@ def main():
                 # print(action)
                 new_state, reward, done = env.step(action, desiredState)
 
-                if step < trial_len and done and ~env.get_collision():
+                if step < trial_len and done and ~env.getCollision():
                     loss_actor = loss_actor.cpu()
                     loss_critic = loss_actor.cpu()
                     print("Completed in {} trials. Reward: {}, actor loss: {}, critic_loss: {}".format(trial,
@@ -686,7 +696,7 @@ def main():
                 # if step >= 199 and step % 10 == 0:
                 #     dqn_agent.save_model("trial-{}.model".format(trial))
 
-                if step == trial_len: b# time budget for episode was overstepped
+                if step == trial_len: # time budget for episode was overstepped
                     loss_actor = loss_actor.cpu()
                     loss_critic = loss_actor.cpu()
                     print("Timeout. Failed to complete in trial {}. Reward: {}, actor loss: {}, critic_loss: {}".format(trial,
@@ -698,7 +708,7 @@ def main():
                         loss_critic_total.append([loss_critic.item(), total_num_of_steps])
                     break
 
-                if env.get_collision():
+                if env.getCollision():
                     loss_actor = loss_actor.cpu()
                     loss_critic = loss_actor.cpu()
                     print("Collision. Failed to complete in trial {}. Reward: {}, actor loss: {}, critic_loss: {}".format(trial,

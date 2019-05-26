@@ -432,12 +432,12 @@ class DQN:
         rewards_v = torch.tensor(rewards, dtype=torch.float32)
         done_mask = torch.ByteTensor(dones)
 
-        if torch.cuda.is_available():
-            states_v = states_v.cuda()
-            next_states_v = next_states_v.cuda()
-            actions_v = actions_v.cuda()
-            rewards_v = rewards_v.cuda()
-            done_mask = done_mask.cuda()
+        # if torch.cuda.is_available():
+        #     states_v = states_v.cuda()
+        #     next_states_v = next_states_v.cuda()
+        #     actions_v = actions_v.cuda()
+        #     rewards_v = rewards_v.cuda()
+        #     done_mask = done_mask.cuda()
 
         # ---------------------- optimize critic ----------------------
         # Use target actor exploitation policy here for loss evaluation

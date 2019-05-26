@@ -106,25 +106,32 @@ errorCodeMotors, motors = initMotors(clientId)
 # errorCodeCamera, frontRobotCamera = vrep.simxGetObjectHandle(clientId, 'frontRobotCamera', vrep.simx_opmode_oneshot_wait)
 errorCodeInitProxSensors, proxSensors = initProxSensors(clientId)
 
-vrep.simxSynchronous(clientId, 1) # enable the synchronous mode (client side). The server side (i.e. V-REP) also needs to be enabled.
-vrep.simxStartSimulation(clientId, vrep.simx_opmode_oneshot) # start the simulation
+# vrep.simxSynchronous(clientId, 1) # enable the synchronous mode (client side). The server side (i.e. V-REP) also needs to be enabled.
+# vrep.simxStartSimulation(clientId, vrep.simx_opmode_oneshot) # start the simulation
 
 # TODO: set joint force/torque from EMIR documentation
 setMotorsForces(clientId, motors, 100, 100)
+
+_, robotHandle = vrep.simxGetObjectHandle(clientId, "MobRob", vrep.simx_opmode_blocking)
+_, _ = vrep.simxGetObjectPosition(clientId, robotHandle, -1, vrep.simx_opmode_streaming)
 
 simStep = 0
 # errorCodeCameraImage, frontCameraResolution, frontCameraImage = vrep.simxGetVisionSensorImage(clientId, frontRobotCamera, 0, vrep.simx_opmode_streaming)
 
 errorCodeProxSensors, detectionStates, detectedPoints = getProximitySensorsReadings(clientId, proxSensors, vrep.simx_opmode_streaming)
 
+vrep.simxSynchronous(clientId, 1) # enable the synchronous mode (client side). The server side (i.e. V-REP) also needs to be enabled.
+vrep.simxStartSimulation(clientId, vrep.simx_opmode_oneshot) # start the simulation
+
 while simStep < 10000:
     vrep.simxSetJointTargetVelocity(clientId, motors[0], 5, vrep.simx_opmode_oneshot) # set the joint target velocity
     vrep.simxSetJointTargetVelocity(clientId, motors[1], 5, vrep.simx_opmode_oneshot) # set the joint target velocity
 
     errorCodeProx, detectionStatesProx, detectedPointsProx = getProximitySensorsReadings(clientId, proxSensors)
+    _, readings = vrep.simxGetObjectPosition(clientId, robotHandle, -1, vrep.simx_opmode_buffer)
 
     vrep.simxSynchronousTrigger(clientId) # trigger next simulation step. Above commands will be applied
-
+    print(readings)
     simStep += 1
 
 vrep.simxPauseSimulation(clientId, vrep.simx_opmode_oneshot) # stop the simulation

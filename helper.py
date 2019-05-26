@@ -39,8 +39,8 @@ train = True
 simulate = False
 plot = False
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-# device = torch.device("cpu")
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 print("Torch will use " + device.__str__() + " as device.")
 
 # Based on http://math.stackexchange.com/questions/1287634/implementing-ornstein-uhlenbeck-in-matlab
@@ -149,18 +149,18 @@ class Critic(nn.Module):
         self.action_dim = action_dim
 
         self.fcs1 = nn.Linear(state_dim, 256).to(device)
-        self.fcs1.weight.data = fanin_init(self.fcs1.weight.data.size()).cuda()
+        self.fcs1.weight.data = fanin_init(self.fcs1.weight.data.size()).cpu()
         self.fcs2 = nn.Linear(256, 128).to(device)
-        self.fcs2.weight.data = fanin_init(self.fcs2.weight.data.size()).cuda()
+        self.fcs2.weight.data = fanin_init(self.fcs2.weight.data.size()).cpu()
 
         self.fca1 = nn.Linear(action_dim, 128).to(device)
-        self.fca1.weight.data = fanin_init(self.fca1.weight.data.size()).cuda()
+        self.fca1.weight.data = fanin_init(self.fca1.weight.data.size()).cpu()
 
         self.fc2 = nn.Linear(256, 128).to(device)
-        self.fc2.weight.data = fanin_init(self.fc2.weight.data.size()).cuda()
+        self.fc2.weight.data = fanin_init(self.fc2.weight.data.size()).cpu()
 
         self.fc3 = nn.Linear(128, 1).to(device)
-        self.fc3.weight.data.uniform_(-EPS, EPS).cuda()
+        self.fc3.weight.data.uniform_(-EPS, EPS).cpu()
 
     def forward(self, state, action):
         """
@@ -169,8 +169,8 @@ class Critic(nn.Module):
         :param action: Input Action (Torch Variable : [n,action_dim] )
         :return: Value function : Q(S,a) (Torch Variable : [n,1] )
         """
-        state = state.cuda()
-        action = action.cuda()
+        state = state.cpu()
+        action = action.cpu()
         s1 = F.relu(self.fcs1(state))
         s2 = F.relu(self.fcs2(s1))
         a1 = F.relu(self.fca1(action))
@@ -198,16 +198,16 @@ class Actor(nn.Module):
         self.action_lim = action_lim
 
         self.fc1 = nn.Linear(state_dim, 256).to(device)
-        self.fc1.weight.data = fanin_init(self.fc1.weight.data.size()).cuda()
+        self.fc1.weight.data = fanin_init(self.fc1.weight.data.size()).cpu()
 
         self.fc2 = nn.Linear(256, 128).to(device)
-        self.fc2.weight.data = fanin_init(self.fc2.weight.data.size()).cuda()
+        self.fc2.weight.data = fanin_init(self.fc2.weight.data.size()).cpu()
 
         self.fc3 = nn.Linear(128, 64).to(device)
-        self.fc3.weight.data = fanin_init(self.fc3.weight.data.size()).cuda()
+        self.fc3.weight.data = fanin_init(self.fc3.weight.data.size()).cpu()
 
         self.fc4 = nn.Linear(64, action_dim).to(device)
-        self.fc4.weight.data.uniform_(-EPS, EPS).cuda()
+        self.fc4.weight.data.uniform_(-EPS, EPS).cpu()
 
     def forward(self, state):
         """
@@ -218,13 +218,13 @@ class Actor(nn.Module):
         :param state: Input state (Torch Variable : [n,state_dim] )
         :return: Output action (Torch Variable: [n,action_dim] )
         """
-        state = state.cuda()
+        # state = state.cuda()
         x = F.relu(self.fc1(state))
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         action = torch.tanh(self.fc4(x))
 
-        return action * torch.from_numpy(np.array(self.action_lim))
+        return action * torch.from_numpy(np.array(self.action_lim)).float()
 
 
 class DQN:
@@ -474,11 +474,12 @@ class DQN:
 
 # VREP INIT ************************************************************************************************************
 class LabEnv:
-    def __init__(self, MobRob):
+    def __init__(self, mobRob):
         self.clientId = -1
-        self.mobRob = MobRob
+        self.mobRob = mobRob
         self.tolerance = 0.1
         self.chassisCollisionHandle = -1
+        self.init()
 
     def init(self):
         subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE',
@@ -497,31 +498,35 @@ class LabEnv:
 
         self.mobRob.clientId = self.clientId
         self.initSimulationObjects()
-        self.mobRob.mobRobHandle = vrep.simxGetObjectHandle(self.clientId, "MobRob", vrep.simx_opmode_blocking)
-        self.chassisCollisionHandle = vrep.simxGetCollisionHandle(self.clientId, "MobRobChassis",
-                                                                  vrep.simx_opmode_blocking)
 
     def initSimulationObjects(self):
         self.mobRob.initMotors()
         self.mobRob.initProxSensors()
-
+        mobRobHandleError, self.mobRob.mobRobHandle = vrep.simxGetObjectHandle(self.clientId, "MobRob",
+                                                                               vrep.simx_opmode_blocking)
+        mobRobCollisionHandleError, self.chassisCollisionHandle = vrep.simxGetCollisionHandle(self.clientId,
+                                                                                              "MobRobChassis",
+                                                                                              vrep.simx_opmode_blocking)
+        self.mobRob.initReadings()
 
     def restart(self):
-        state = self.mobRob.getState()
         self.stop()
+        time.sleep(0.1)
         self.start()
+        state = self.mobRob.getState()
+        # self.pause()
         return state
 
     def computeReward(self, state, desiredState):
         done = False
-        alpha = 1
+        alpha = 10
         beta = 1
-        positionReward = (norm(desiredState[:3]) - norm(state[:3]))
-        velocityReward = (norm(desiredState[3:6]) - norm(state[3:6]))
+        positionReward = (norm(desiredState[:2]) - norm(state[:2]))  # TODO: include yaw angle reward
+        velocityReward = (norm(desiredState[3:6]) - norm(state[3:6]))  # TODO: include yaw speed reward
         reward = np.exp(-alpha * positionReward) + np.exp(-beta * velocityReward)
-        if (norm(desiredState[:3]) - norm(state[:3])) < self.tolerance:
+        if (norm(desiredState[:2]) - norm(state[:2])) < self.tolerance:
             reward += 10
-            if (norm(desiredState[3:6]) - norm(state[3:6])) < self.tolerance:
+            if (norm(desiredState[3:5]) - norm(state[3:5])) < self.tolerance:
                 done = True
                 reward += 10
 
@@ -529,17 +534,19 @@ class LabEnv:
 
     def step(self, action, desiredState):
         self.mobRob.setMotorsTargetVelocities(action)
+        # vrep.simxSynchronousTrigger(self.clientId)
+        state = self.mobRob.getState()
         vrep.simxSynchronousTrigger(self.clientId)
-        _, _, state = self.mobRob.getProximitySensorsReadings()
         reward, done = self.computeReward(state, desiredState)
 
         return state, reward, done
 
     def getCollision(self, vrepMode=vrep.simx_opmode_buffer):
-        _, collisionOccured = vrep.simxReadCollision(self.clientId, "MobRobChassis", vrepMode)
+        _, collisionOccured = vrep.simxReadCollision(self.clientId, self.chassisCollisionHandle, vrepMode)
         return collisionOccured
 
     def start(self):
+        vrep.simxSynchronous(self.clientId, 1)
         vrep.simxStartSimulation(self.clientId, vrep.simx_opmode_oneshot)  # start the simulation
 
     def pause(self):
@@ -550,7 +557,7 @@ class LabEnv:
 
 
 class MobRob:
-    def __init__(self, robotName, motorsNaming, proxSensorsNaming, clientId = -1):
+    def __init__(self, robotName, motorsNaming, proxSensorsNaming, clientId=-1):
         self.clientId = clientId
         self.errorCodeMotors = []
         self.motors = []
@@ -560,8 +567,6 @@ class MobRob:
         self.motorsNaming = motorsNaming
         self.proxSensorsNaming = proxSensorsNaming
         self.mobRobHandle = -1
-        self.initMotors()
-        self.initProxSensors()
 
     def initMotors(self):
         for motorName in self.motorsNaming:
@@ -570,11 +575,16 @@ class MobRob:
             self.motors.append(motor)
 
     def initProxSensors(self):
-
         for proxSensorName in self.proxSensorsNaming:
             errorCode, proximitySensor = vrep.simxGetObjectHandle(self. clientId, proxSensorName, vrep.simx_opmode_oneshot_wait)
             self.errorCodeProxSensors.append(errorCode)
             self.proxSensors.append(proximitySensor)
+
+    def initReadings(self):
+        _, _, _ = self.getProximitySensorsReadings(vrep.simx_opmode_streaming)
+        _ = self.getPosition(vrep.simx_opmode_streaming)
+        _ = self.getOrientation(vrep.simx_opmode_streaming)
+        _ = self.getVelocities(vrep.simx_opmode_streaming)
 
     def calculateDistance(self, sensorReading):
         return norm(sensorReading)
@@ -582,13 +592,14 @@ class MobRob:
     def getState(self, vrepMode=vrep.simx_opmode_buffer):
         state = self.getPosition(vrepMode)
         state.append(self.getOrientation(vrepMode))
-        state.append((self.getVelocities(vrepMode)))
-        state.append(self.getProximitySensorsReadings(vrepMode))
+        state = np.append(state, self.getVelocities(vrepMode))
+        _, _, proxReadings = self.getProximitySensorsReadings(vrepMode)
+        state = np.append(state, proxReadings)
         return state  # x, y, yawAngle, vx, vy, yawVel, proxySensor0...proxySensor5
 
     def getPosition(self, vrepMode):
         _, position = vrep.simxGetObjectPosition(self.clientId, self.mobRobHandle, -1, vrepMode)
-        return position[1:] # returns x and y coordinates
+        return position[:2] # returns x and y coordinates
 
     def getOrientation(self, vrepMode):
         _, orientation = vrep.simxGetObjectOrientation(self.clientId, self.mobRobHandle, -1, vrepMode)
@@ -632,20 +643,19 @@ def main():
     learning_rate = 0.001
 
     trials = 20000
-    trial_len = 290
+    trial_len = 200
 
-    desiredState = [1.4, 0.3, -180.0, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
+    desiredState = [1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
 
     mobRob = MobRob(['MobRob'],
                     ['leftMotor', 'rightMotor'],
                     ['proximitySensor0', 'proximitySensor1', 'proximitySensor2', 'proximitySensor3', 'proximitySensor4',
                      'proximitySensor5'])
-
     env = LabEnv(mobRob)
 
-    state_dim = 6  # TODO: simulate battery? 6 are the number of proxy sensors
+    state_dim = 12  # TODO: simulate battery? 6 are the number of proxy sensors
     action_dim = 2
-    action_lim = [2, 2]  # 2 o/sec is the max angular speed of each motor
+    action_lim = [2.0, 2.0]  # 2 o/sec is the max angular speed of each motor
 
     if train:
         dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate)
@@ -719,6 +729,7 @@ def main():
                         loss_actor_total.append([loss_actor.item(), total_num_of_steps])
                         loss_critic_total.append([loss_critic.item(), total_num_of_steps])
                     break
+
 
             gc.collect()
 

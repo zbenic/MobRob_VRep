@@ -228,9 +228,9 @@ class Actor(nn.Module):
 
 
 class DQN:
-    def __init__(self, env, state_dim, action_dim, action_lim, gamma=0.85, epsilon=1.0, tau=0.125, learning_rate=0.005):
+    def __init__(self, env, state_dim, action_dim, action_lim, gamma=0.85, epsilon=1.0, tau=0.125, learning_rate=0.005, min_pool_size=10000):
         self.env = env
-        self.min_pool_size = 10000
+        self.min_pool_size = min_pool_size
         self.batch_size = 128
         self.memory = deque(maxlen=1000000)
 
@@ -477,7 +477,7 @@ class LabEnv:
     def __init__(self, mobRob):
         self.clientId = -1
         self.mobRob = mobRob
-        self.tolerance = 0.1
+        self.tolerance = 0.05
         self.chassisCollisionHandle = -1
         self.init()
 
@@ -508,6 +508,7 @@ class LabEnv:
                                                                                               "MobRobChassis",
                                                                                               vrep.simx_opmode_blocking)
         self.mobRob.initReadings()
+        self.getCollision(vrep.simx_opmode_streaming)
 
     def restart(self):
         self.stop()
@@ -519,14 +520,14 @@ class LabEnv:
 
     def computeReward(self, state, desiredState):
         done = False
-        alpha = 10
-        beta = 1
-        positionReward = (norm(desiredState[:2]) - norm(state[:2]))  # TODO: include yaw angle reward
-        velocityReward = (norm(desiredState[3:6]) - norm(state[3:6]))  # TODO: include yaw speed reward
-        reward = np.exp(-alpha * positionReward) + np.exp(-beta * velocityReward)
-        if (norm(desiredState[:2]) - norm(state[:2])) < self.tolerance:
+        positionReward = 1 - norm(np.array(desiredState[:2]) - np.array(state[:2])) ** 0.4  # TODO: include yaw angle reward
+        velocityReward = (1 - max(norm(np.array(state[3:5])), self.tolerance)) ** (1 / max(norm(np.array(desiredState[:2]) - np.array(state[:2])), self.tolerance))  # TODO: include yaw speed reward
+        reward = positionReward * velocityReward
+        if self.getCollision():
+            reward -= 50
+        if norm(np.array(desiredState[:2]) - np.array(state[:2])) < self.tolerance:
             reward += 10
-            if (norm(desiredState[3:5]) - norm(state[3:5])) < self.tolerance:
+            if norm(np.array(desiredState[3:5]) - np.array(state[3:5])) < self.tolerance:
                 done = True
                 reward += 10
 
@@ -536,8 +537,9 @@ class LabEnv:
         self.mobRob.setMotorsTargetVelocities(action)
         # vrep.simxSynchronousTrigger(self.clientId)
         state = self.mobRob.getState()
+        groundTruthState = self.mobRob.getGroundTruthState()
         vrep.simxSynchronousTrigger(self.clientId)
-        reward, done = self.computeReward(state, desiredState)
+        reward, done = self.computeReward(groundTruthState, desiredState)
 
         return state, reward, done
 
@@ -590,12 +592,16 @@ class MobRob:
         return norm(sensorReading)
 
     def getState(self, vrepMode=vrep.simx_opmode_buffer):
+        state = []
+        _, _, proxSensorReadings = self.getProximitySensorsReadings(vrepMode)
+        state = np.append(state, proxSensorReadings)
+        return state  # proxySensor0...proxySensor5
+
+    def getGroundTruthState(self, vrepMode=vrep.simx_opmode_buffer):
         state = self.getPosition(vrepMode)
         state.append(self.getOrientation(vrepMode))
         state = np.append(state, self.getVelocities(vrepMode))
-        _, _, proxReadings = self.getProximitySensorsReadings(vrepMode)
-        state = np.append(state, proxReadings)
-        return state  # x, y, yawAngle, vx, vy, yawVel, proxySensor0...proxySensor5
+        return state  # x, y, yawAngle, vx, vy, yawVel
 
     def getPosition(self, vrepMode):
         _, position = vrep.simxGetObjectPosition(self.clientId, self.mobRobHandle, -1, vrepMode)
@@ -639,13 +645,15 @@ class MobRob:
 def main():
     gamma = 0.99
     epsilon = .95
-    tau = 0.001  # 0.125
+    tau = 0.125  # 0.001
     learning_rate = 0.001
 
-    trials = 20000
-    trial_len = 200
+    min_pool_size = 10000
 
-    desiredState = [1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
+    trials = 1000
+    trial_len = 500
+
+    desiredState = [-1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
 
     mobRob = MobRob(['MobRob'],
                     ['leftMotor', 'rightMotor'],
@@ -653,12 +661,12 @@ def main():
                      'proximitySensor5'])
     env = LabEnv(mobRob)
 
-    state_dim = 12  # TODO: simulate battery? 6 are the number of proxy sensors
+    state_dim = 6  # TODO: simulate battery? 6 are the number of proxy sensors
     action_dim = 2
-    action_lim = [2.0, 2.0]  # 2 o/sec is the max angular speed of each motor
+    action_lim = [2.0, 2.0]  # 2 o/sec is the max angular speed of each motor, max. linear velocity is 0.5 m/s
 
     if train:
-        dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate)
+        dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate, min_pool_size=min_pool_size)
         if dqn_agent is not None:
             print('DQN agent initialized')
         else:

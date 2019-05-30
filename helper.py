@@ -35,10 +35,6 @@ except:
 
 EPS = 0.003
 
-train = True
-simulate = False
-plot = False
-
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
 print("Torch will use " + device.__str__() + " as device.")
@@ -474,16 +470,20 @@ class DQN:
 
 # VREP INIT ************************************************************************************************************
 class LabEnv:
-    def __init__(self, mobRob):
+    def __init__(self, mobRob, vrepHeadlessMode=False):
         self.clientId = -1
         self.mobRob = mobRob
         self.tolerance = 0.05
         self.chassisCollisionHandle = -1
+        self.headlessMode = vrepHeadlessMode
         self.init()
 
     def init(self):
-        subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE',
-                          'G:/GIT/MobRob/Scene/labScene.ttt'])
+        if self.headlessMode:
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'G:/GIT/MobRob/Scene/labScene.ttt'])
+        else:
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'G:/GIT/MobRob/Scene/labScene.ttt'])
+
         time.sleep(10)
         print('Simulation started')
 
@@ -639,10 +639,12 @@ class MobRob:
             vrep.simxSetJointTargetVelocity(self.clientId, self.motors[motorIdx], motorsTargetVelocities[motorIdx], vrep.simx_opmode_oneshot)  # set the joint target velocity
 
 
-
-
-
 def main():
+    train = True
+    vrepHeadlessMode = True
+    simulate = False
+    plot = False
+
     gamma = 0.99
     epsilon = .95
     tau = 0.125  # 0.001
@@ -650,7 +652,7 @@ def main():
 
     min_pool_size = 10000
 
-    trials = 1000
+    trials = 20000
     trial_len = 500
 
     desiredState = [-1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
@@ -659,7 +661,7 @@ def main():
                     ['leftMotor', 'rightMotor'],
                     ['proximitySensor0', 'proximitySensor1', 'proximitySensor2', 'proximitySensor3', 'proximitySensor4',
                      'proximitySensor5'])
-    env = LabEnv(mobRob)
+    env = LabEnv(mobRob, vrepHeadlessMode)
 
     state_dim = 6  # TODO: simulate battery? 6 are the number of proxy sensors
     action_dim = 2
@@ -746,11 +748,9 @@ def main():
         np.save('actor_loss', loss_actor_total)
         np.save('critic_loss', loss_critic_total)
     elif simulate:
-        dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate)
-        dqn_agent.actor.load_state_dict(torch.load('actor.pth'))
-        cur_state = env.reset()
-        env.render()
-        time.sleep(5)
+        dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate, min_pool_size=min_pool_size)
+        dqn_agent.actor.load_state_dict(torch.load('./Trainings/latest/actor.pth'))
+        cur_state = env.restart()
 
         for step in range(100000):
             # total_num_of_steps += 1
@@ -758,12 +758,12 @@ def main():
             action = dqn_agent.get_exploitation_action_simulation(cur_state)
             # actions[trial][step] = action
             # print(action)
-            new_state, _, done, _ = env.step(action)
+            new_state, _, done = env.step(action, desiredState)
             cur_state = new_state
 
     elif plot:
-        actor_loss = np.load('actor_loss.npy')
-        critic_loss = np.load('critic_loss.npy')
+        actor_loss = np.load('./Trainings/latest/actor_loss.npy')
+        critic_loss = np.load('./Trainings/latest/critic_loss.npy')
 
         f, ax = plt.subplots(2, sharex=True, sharey=False)
 

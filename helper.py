@@ -39,31 +39,35 @@ EPS = 0.003
 device = torch.device("cpu")
 print("Torch will use " + device.__str__() + " as device.")
 
-# Based on http://math.stackexchange.com/questions/1287634/implementing-ornstein-uhlenbeck-in-matlab
-class OrnsteinUhlenbeckActionNoise:
 
-    def __init__(self, action_dim, mu = 0, theta = 0.15, sigma = 0.2):
-        self.action_dim = action_dim
+# Ornstein-Ulhenbeck Process
+# Taken from #https://github.com/vitchyr/rlkit/blob/master/rlkit/exploration_strategies/ou_strategy.py
+class OUNoise(object):
+    def __init__(self, action_space, mu=0.0, theta=0.15, max_sigma=0.3, min_sigma=0.3, decay_period=100000):
         self.mu = mu
         self.theta = theta
-        self.sigma = sigma
-        # self.dt = dt
-        self.X = np.ones(self.action_dim) * self.mu
+        self.sigma = max_sigma
+        self.max_sigma = max_sigma
+        self.min_sigma = min_sigma
+        self.decay_period = decay_period
+        self.action_dim = action_space.shape[0]
+        self.low = action_space.min()
+        self.high = action_space.max()
+        self.reset()
 
     def reset(self):
-        self.X = np.ones(self.action_dim) * self.mu
+        self.state = np.ones(self.action_dim) * self.mu
 
-    def sample(self):
-        dx = self.theta * (self.mu - self.X)
-        dx = dx + self.sigma * np.random.randn(len(self.X))
-        self.X = self.X + dx
-        return self.X
+    def evolve_state(self):
+        x = self.state
+        dx = self.theta * (self.mu - x) + self.sigma * np.random.randn(self.action_dim)
+        self.state = x + dx
+        return self.state
 
-    # def sample(self):
-    #     dx = self.theta * (self.mu - self.X) * self.dt
-    #     dx = dx + self.sigma * np.sqrt(self.dt) * np.random.normal(len(self.X))
-    #     self.X = self.X + dx
-    #     return self.X
+    def get_action(self, action, t=0):
+        ou_state = self.evolve_state()
+        self.sigma = self.max_sigma - (self.max_sigma - self.min_sigma) * min(1.0, t / self.decay_period)
+        return np.clip(action + ou_state, self.low, self.high)
 
 
 def soft_update(target, source, tau):
@@ -97,138 +101,82 @@ def fanin_init(size, fanin=None):
     return torch.Tensor(size).uniform_(-v, v)
 
 
-class Memory:   # stored as ( s, a, r, s_ ) in SumTree
-    e = 0.01
-    a = 0.6
+class Memory:
+    def __init__(self, max_size):
+        self.max_size = max_size
+        self.buffer = deque(maxlen=max_size)
 
-    def __init__(self, capacity):
-        self.tree = SumTree(capacity)
+    def push(self, state, action, reward, next_state, done):
+        experience = (state, action, np.array([reward]), next_state, done)
+        self.buffer.append(experience)
 
-    def _getPriority(self, error):
-        return (error + self.e) ** self.a
+    def sample(self, batch_size):
+        state_batch = []
+        action_batch = []
+        reward_batch = []
+        next_state_batch = []
+        done_batch = []
 
-    def add(self, error, sample):
-        p = self._getPriority(error)
-        self.tree.add(p, sample)
+        batch = random.sample(self.buffer, batch_size)
 
-    def sample(self, n):
-        batch = []
-        segment = self.tree.total() / n
+        for experience in batch:
+            state, action, reward, next_state, done = experience
+            state_batch.append(state)
+            action_batch.append(action)
+            reward_batch.append(reward)
+            next_state_batch.append(next_state)
+            done_batch.append(done)
 
-        for i in range(n):
-            a = segment * i
-            b = segment * (i + 1)
+        return state_batch, action_batch, reward_batch, next_state_batch, done_batch
 
-            s = random.uniform(a, b)
-            (idx, p, data) = self.tree.get(s)
-            batch.append( (idx, data) )
-
-        return batch
-
-    def update(self, idx, error):
-        p = self._getPriority(error)
-        self.tree.update(idx, p)
+    def __len__(self):
+        return len(self.buffer)
 
 
 
 class Critic(nn.Module):
-
-    def __init__(self, state_dim, action_dim):
-        """
-        :param state_dim: Dimension of input state (int)
-        :param action_dim: Dimension of input action (int)
-        :return:
-        """
+    def __init__(self, input_size, hidden_size, output_size):
         super(Critic, self).__init__()
-
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-
-        self.fcs1 = nn.Linear(state_dim, 256).to(device)
-        self.fcs1.weight.data = fanin_init(self.fcs1.weight.data.size()).cpu()
-        self.fcs2 = nn.Linear(256, 128).to(device)
-        self.fcs2.weight.data = fanin_init(self.fcs2.weight.data.size()).cpu()
-
-        self.fca1 = nn.Linear(action_dim, 128).to(device)
-        self.fca1.weight.data = fanin_init(self.fca1.weight.data.size()).cpu()
-
-        self.fc2 = nn.Linear(256, 128).to(device)
-        self.fc2.weight.data = fanin_init(self.fc2.weight.data.size()).cpu()
-
-        self.fc3 = nn.Linear(128, 1).to(device)
-        self.fc3.weight.data.uniform_(-EPS, EPS).cpu()
+        self.linear1 = nn.Linear(input_size, hidden_size)
+        self.linear2 = nn.Linear(hidden_size, hidden_size)
+        self.linear3 = nn.Linear(hidden_size, output_size)
 
     def forward(self, state, action):
         """
-        returns Value function Q(s,a) obtained from critic network
-        :param state: Input state (Torch Variable : [n,state_dim] )
-        :param action: Input Action (Torch Variable : [n,action_dim] )
-        :return: Value function : Q(S,a) (Torch Variable : [n,1] )
+        Params state and actions are torch tensors
         """
-        state = state.cpu()
-        action = action.cpu()
-        s1 = F.relu(self.fcs1(state))
-        s2 = F.relu(self.fcs2(s1))
-        a1 = F.relu(self.fca1(action))
-        x = torch.cat((s2, a1), dim=1)
-
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = torch.cat([state, action], 1)
+        x = F.relu(self.linear1(x))
+        x = F.relu(self.linear2(x))
+        x = self.linear3(x)
 
         return x
 
 
 class Actor(nn.Module):
-
-    def __init__(self, state_dim, action_dim, action_lim):
-        """
-        :param state_dim: Dimension of input state (int)
-        :param action_dim: Dimension of output action (int)
-        :param action_lim: Used to limit action in [-action_lim,action_lim]
-        :return:
-        """
+    def __init__(self, input_size, hidden_size, output_size, action_lim, learning_rate=3e-4):
         super(Actor, self).__init__()
-
-        self.state_dim = state_dim
-        self.action_dim = action_dim
         self.action_lim = action_lim
-
-        self.fc1 = nn.Linear(state_dim, 256).to(device)
-        self.fc1.weight.data = fanin_init(self.fc1.weight.data.size()).cpu()
-
-        self.fc2 = nn.Linear(256, 128).to(device)
-        self.fc2.weight.data = fanin_init(self.fc2.weight.data.size()).cpu()
-
-        self.fc3 = nn.Linear(128, 64).to(device)
-        self.fc3.weight.data = fanin_init(self.fc3.weight.data.size()).cpu()
-
-        self.fc4 = nn.Linear(64, action_dim).to(device)
-        self.fc4.weight.data.uniform_(-EPS, EPS).cpu()
+        self.linear1 = nn.Linear(input_size, hidden_size)
+        self.linear2 = nn.Linear(hidden_size, hidden_size)
+        self.linear3 = nn.Linear(hidden_size, output_size)
 
     def forward(self, state):
         """
-        returns policy function Pi(s) obtained from actor network
-        this function is a gaussian prob distribution for all actions
-        with mean lying in (-1,1) and sigma lying in (0,1)
-        The sampled action can , then later be rescaled
-        :param state: Input state (Torch Variable : [n,state_dim] )
-        :return: Output action (Torch Variable: [n,action_dim] )
+        Param state is a torch tensor
         """
-        # state = state.cuda()
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        action = torch.tanh(self.fc4(x))
+        x = F.relu(self.linear1(state))
+        x = F.relu(self.linear2(x))
+        x = torch.tanh(self.linear3(x))
 
-        return action * torch.from_numpy(np.array(self.action_lim)).float()
+        return x * torch.from_numpy(np.array(self.action_lim)).float()
 
 
 class DQN:
-    def __init__(self, env, state_dim, action_dim, action_lim, gamma=0.85, epsilon=1.0, tau=0.125, learning_rate=0.005, min_pool_size=10000):
+    def __init__(self, env, state_dim, action_dim, action_lim, gamma=0.85, epsilon=1.0, tau=0.125, learning_rate=0.001, hidden_dim=256, batch_size=128, max_memory_size=100000):
         self.env = env
-        self.min_pool_size = min_pool_size
-        self.batch_size = 128
-        self.memory = deque(maxlen=1000000)
+        self.batch_size = batch_size
+        self.memory = Memory(max_memory_size)
 
         self.gamma = gamma
         self.epsilon = epsilon
@@ -240,31 +188,18 @@ class DQN:
         self.input_num = state_dim
         self.output_num = action_dim
         self.action_lim = action_lim
+        self.hidden_dim = hidden_dim
 
-        self.noise = OrnsteinUhlenbeckActionNoise(self.output_num)
-
-        self.actor = Actor(state_dim, action_dim, action_lim)
-        self.target_actor = Actor(state_dim, action_dim, action_lim)
-        hard_update(self.target_actor, self.actor)
+        self.actor = Actor(state_dim, hidden_dim, action_dim, action_lim)
+        self.actor_target = Actor(state_dim, hidden_dim, action_dim, action_lim)
+        hard_update(self.actor_target, self.actor)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.learning_rate/10)
 
-        self.critic = Critic(state_dim, action_dim)
-        self.target_critic = Critic(state_dim, action_dim)
-        hard_update(self.target_critic, self.critic)
+        self.critic = Critic(state_dim + action_dim, hidden_dim, action_dim)
+        self.critic_target = Critic(state_dim + action_dim, hidden_dim, action_dim)
+        hard_update(self.critic_target, self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.learning_rate)
-
-
-        self.criterion = torch.nn.SmoothL1Loss(size_average=False) #TODO: MSELoss or SmoothL1Loss (Hubert)
-
-    # def create_actor(self):
-    #     model = torch.nn.Sequential(
-    #         torch.nn.Linear(self.input_num, 64),
-    #         torch.nn.Tanh(),
-    #         torch.nn.Linear(64, 64),
-    #         torch.nn.Tanh(),
-    #         torch.nn.Linear(64, self.output_num),
-    #     )
-    #     return model
+        self.critic_criterion = torch.nn.SmoothL1Loss(size_average=False) #TODO: MSELoss or SmoothL1Loss (Hubert)
 
     def get_exploitation_action_simulation(self, state):
         """
@@ -293,179 +228,47 @@ class DQN:
         :return: sampled action (Numpy array)
         """
         # TODO: implement parameter noise
-        state = Variable(torch.from_numpy(state).float())
-        action = self.actor.forward(state).detach().cpu()
-        new_action = action.data.numpy() + self.noise.sample()
-        return new_action
+        state = Variable(torch.from_numpy(state).float().unsqueeze(0))
+        action = self.actor.forward(state).cpu()
+        action = action.detach().numpy()[0,0]
 
-    def act(self, state, trial):
-        if trial % 5 == 0:
-            # validate every 5th episode
-            action = self.get_exploitation_action(state)
-        else:
-            # get action based on observation, use exploration policy here
-            action = self.get_exploration_action(state)
-        return action #.clip(-1, 1)
+        return action
 
     def remember(self, state, action, reward, new_state, done):
-        self.memory.append([state, action, reward, new_state, done])
-
-    def unpack_batch(self, batch):
-        states, actions, rewards, dones, last_states = [], [], [], [], []
-        for exp in batch:
-            state = exp[0]
-            states.append(state)
-            actions.append(exp[1])
-            rewards.append(exp[2])
-            dones.append(exp[4])
-            if exp[3] is None:
-                last_states.append(state)  # the result will be masked anyway
-            else:
-                last_states.append(exp[3])
-        return np.array(states, copy=False), np.array(actions), np.array(rewards, dtype=np.float32), \
-               np.array(dones, dtype=np.uint8), np.array(last_states, copy=False)
-
-    def calc_loss(self, batch):
-        states, actions, rewards, dones, next_states = self.unpack_batch(batch)
-
-        states_v = torch.tensor(states, dtype=torch.float32)
-        next_states_v = torch.tensor(next_states, dtype=torch.float32)
-        actions_v = torch.tensor(actions, dtype=torch.float32)
-        rewards_v = torch.tensor(rewards, dtype=torch.float32)
-        done_mask = torch.ByteTensor(dones)
-
-        # if cuda:
-        #     states_v = states_v.cuda(non_blocking=cuda_async)
-        #     next_states_v = next_states_v.cuda(non_blocking=cuda_async)
-        #     actions_v = actions_v.cuda(non_blocking=cuda_async)
-        #     rewards_v = rewards_v.cuda(non_blocking=cuda_async)
-        #     done_mask = done_mask.cuda(non_blocking=cuda_async)
-
-        # ---------------------- optimize critic ----------------------
-        # Use target actor exploitation policy here for loss evaluation
-        next_actions_v = self.target_actor.forward(next_states_v).detach()
-        next_val = torch.squeeze(self.target_critic.forward(next_states_v, next_actions_v).detach())
-
-        # y_exp = r + gamma*Q'( s2, pi'(s2))
-        y_expected = rewards_v + self.gamma * done_mask.float() * next_val
-
-        self.critic_optimizer.zero_grad()
-
-        # y_pred = Q( s1, a1)
-        y_predicted = torch.squeeze(self.critic.forward(states_v, actions_v))
-
-        # compute critic loss
-        loss_critic = self.criterion(y_predicted, y_expected)
-
-        # compute actor loss
-        self.actor_optimizer.zero_grad()
-        pred_a1 = self.actor.forward(states_v)
-        # loss_actor = -1 * torch.sum(self.critic.forward(states_v, pred_a1))
-        loss_actor = -1 * self.critic.forward(states_v, pred_a1)
-        loss_actor = loss_actor.mean()
-
-        return loss_actor, loss_critic
-
-    def train(self, step, cuda=False):
-        if len(self.memory) < self.min_pool_size:
-            return torch.Tensor((1,1), None), torch.Tensor((1,1), None)
-
-        batch = random.sample(self.memory, self.batch_size)
-
-        loss_actor, loss_critic = self.calc_loss(batch)
-
-        # if step % 100 == 0:
-        #     print('Iteration :- ', step, ' Loss_actor :- ', loss_actor.data.numpy(),
-        #           ' Loss_critic :- ', loss_critic.data.numpy())
-
-        # -------------------- update the critic --------------------
-
-        # Before the backward pass, use the optimizer object to zero all of the
-        # gradients for the Tensors it will update (which are the learnable weights
-        # of the model)
-        # self.critic_optimizer.zero_grad()
-        # Backward pass: compute gradient of the loss with respect to model parameters
-        loss_critic.backward()
-        # Clamp the gradients to avoid vanishing gradient problem
-        for param in self.critic.parameters():
-            param.grad.data.clamp_(-1, 1)
-        # Calling the step function on an Optimizer makes an update to its parameters
-        self.critic_optimizer.step()
-
-        # ---------------------- optimize actor ----------------------
-
-        # Before the backward pass, use the optimizer object to zero all of the
-        # gradients for the Tensors it will update (which are the learnable weights
-        # of the model)
-        # self.actor_optimizer.zero_grad()
-        # Backward pass: compute gradient of the loss with respect to model parameters
-        loss_actor.backward()
-        # Clamp the gradients to avoid the vanishing gradient problem
-        for param in self.actor.parameters():
-            param.grad.data.clamp_(-1, 1)
-        # Calling the step function on an Optimizer makes an update to its parameters
-        self.actor_optimizer.step()
-
-        soft_update(self.target_actor, self.actor, self.tau)  # updates actor target model
-        soft_update(self.target_critic, self.critic, self.tau)  # updates actor target model
-
-        return loss_actor, loss_critic
-
-    # def save_model(self, fn):
-    #     self.actor.save(fn)
+        self.memory.push(state, action, reward, new_state, done)
 
     def optimize(self):
-        if len(self.memory) < self.min_pool_size:
-            return torch.Tensor(), torch.Tensor()
+        states, actions, rewards, next_states, _ = self.memory.sample(self.batch_size)
 
-        batch = random.sample(self.memory, self.batch_size)
+        states = torch.FloatTensor(states)
+        actions = torch.FloatTensor(actions)
+        rewards = torch.FloatTensor(rewards)
+        next_states = torch.FloatTensor(next_states)
 
-        states, actions, rewards, dones, next_states = self.unpack_batch(batch)
+        # Critic loss
+        Qvals = self.critic.forward(states, actions)
+        next_actions = self.actor_target.forward(next_states)
+        next_Q = self.critic_target.forward(next_states, next_actions.detach())
+        Qprime = rewards + self.gamma * next_Q
+        critic_loss = self.critic_criterion(Qvals, Qprime)
 
-        states_v = torch.tensor(states, dtype=torch.float32)
-        next_states_v = torch.tensor(next_states, dtype=torch.float32)
-        actions_v = torch.tensor(actions, dtype=torch.float32)
-        rewards_v = torch.tensor(rewards, dtype=torch.float32)
-        done_mask = torch.ByteTensor(dones)
+        # Actor loss
+        policy_loss = -self.critic.forward(states, self.actor.forward(states)).mean()
 
-        # if torch.cuda.is_available():
-        #     states_v = states_v.cuda()
-        #     next_states_v = next_states_v.cuda()
-        #     actions_v = actions_v.cuda()
-        #     rewards_v = rewards_v.cuda()
-        #     done_mask = done_mask.cuda()
-
-        # ---------------------- optimize critic ----------------------
-        # Use target actor exploitation policy here for loss evaluation
-        next_actions_v = self.target_actor.forward(next_states_v).detach()
-        next_val = torch.squeeze(self.target_critic.forward(next_states_v, next_actions_v).detach())
-
-        # y_exp = r + gamma*Q'( s2, pi'(s2))
-        y_expected = rewards_v + (1-done_mask.float()) * self.gamma * next_val #TODO: * done_mask.float() or (1-isdone) needed?
-
-        # y_pred = Q( s1, a1)
-        y_predicted = torch.squeeze(self.critic.forward(states_v, actions_v))
-
-        # compute critic loss
-        loss_critic = self.criterion(y_predicted, y_expected)
-        self.critic_optimizer.zero_grad()
-        loss_critic.backward()
-        self.critic_optimizer.step()
-
-        # ---------------------- optimize actor ----------------------
-        pred_a1 = self.actor.forward(states_v)
-        # pred_q1 = torch.squeeze(self.critic.forward(states_v, pred_a1)) #TODO: try this with (https://github.com/ctmakro/gymnastics/blob/master/ddpg.py)
-        # loss_actor = -1 * torch.sum(self.critic.forward(states_v, pred_a1))
-        loss_actor = -1 * self.critic.forward(states_v, pred_a1)
-        loss_actor = loss_actor.mean()
+        # update networks
         self.actor_optimizer.zero_grad()
-        loss_actor.backward()
+        policy_loss.backward()
         self.actor_optimizer.step()
 
-        soft_update(self.target_actor, self.actor, self.tau)  # updates actor target model
-        soft_update(self.target_critic, self.critic, self.tau)  # updates actor target model
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
 
-        return loss_actor, loss_critic
+        # update target networks
+        soft_update(self.actor_target, self.actor, self.tau)
+        soft_update(self.critic_target, self.critic, self.tau)
+
+        return policy_loss, critic_loss
 
 
 # VREP INIT ************************************************************************************************************
@@ -645,17 +448,22 @@ def main():
     simulate = False
     plot = False
 
+    state_dim = 6  # TODO: simulate battery? 6 are the number of proxy sensors
+    action_dim = 2
+    action_space = np.array([[-2, 2], [-2, 2]])
+    action_lim = [2.0, 2.0]  # 2 o/sec is the max angular speed of each motor, max. linear velocity is 0.5 m/s
+
     gamma = 0.99
     epsilon = .95
-    tau = 0.125  # 0.001
+    tau = 0.01  # 0.001
     learning_rate = 0.001
 
-    min_pool_size = 10000
-
-    trials = 20000
+    trials = 1000
     trial_len = 500
 
     desiredState = [-1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
+
+    noise = OUNoise(action_space)
 
     mobRob = MobRob(['MobRob'],
                     ['leftMotor', 'rightMotor'],
@@ -663,12 +471,8 @@ def main():
                      'proximitySensor5'])
     env = LabEnv(mobRob, vrepHeadlessMode)
 
-    state_dim = 6  # TODO: simulate battery? 6 are the number of proxy sensors
-    action_dim = 2
-    action_lim = [2.0, 2.0]  # 2 o/sec is the max angular speed of each motor, max. linear velocity is 0.5 m/s
-
     if train:
-        dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate, min_pool_size=min_pool_size)
+        dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate)
         if dqn_agent is not None:
             print('DQN agent initialized')
         else:
@@ -678,52 +482,46 @@ def main():
         actions = np.zeros((trials, trial_len+1, action_dim), dtype=np.float)
         loss_actor_total = []
         loss_critic_total = []
+        episode_rewards = []
         for trial in range(trials):
             cur_state = env.restart()
+            episode_reward = 0
             for step in range(trial_len+1):
                 total_num_of_steps += 1
                 # action = dqn_agent.act(cur_state, trial)
                 action = dqn_agent.get_exploration_action(cur_state)
+                action = noise.get_action(action, step)
                 actions[trial][step] = action
                 # print(action)
                 new_state, reward, done = env.step(action, desiredState)
 
+                dqn_agent.remember(cur_state, action, reward, new_state, done)
+
+                if len(dqn_agent.memory) > dqn_agent.batch_size:
+                    loss_actor, loss_critic = dqn_agent.optimize()
+
+                cur_state = new_state
+                episode_reward += reward
+
                 if step < trial_len and done and ~env.getCollision():
                     loss_actor = loss_actor.cpu()
                     loss_critic = loss_actor.cpu()
-                    print("Completed in {} trials. Reward: {}, actor loss: {}, critic_loss: {}".format(trial,
-                                                                                                       reward,
+                    print("Completed in {} trials. Episode reward: {}, actor loss: {}, critic_loss: {}".format(trial,
+                                                                                                       episode_reward,
                                                                                                        loss_actor.data.numpy(),
                                                                                                        loss_critic.data.numpy()))
+                    loss_actor_total.append([loss_actor.item(), total_num_of_steps])
+                    loss_critic_total.append([loss_critic.item(), total_num_of_steps])
                     break
-                    # dqn_agent.save_model("success.model")
-                    # sys.exit()
-
-                dqn_agent.remember(cur_state, action, reward, new_state, done)
-
-                # loss_actor, loss_critic = dqn_agent.train(step)  # internally iterates default (prediction) model
-                loss_actor, loss_critic = dqn_agent.optimize()  # internally iterates default (prediction) model
-
-
-                # if step % update_target_network_step == 0:
-                #     soft_update(dqn_agent.target_actor, dqn_agent.actor, tau)  # updates actor target model
-                #     soft_update(dqn_agent.target_critic, dqn_agent.critic, tau)  # updates actor target model
-
-                cur_state = new_state
-                # if done:
-                #     break
-
-                # if step >= 199 and step % 10 == 0:
-                #     dqn_agent.save_model("trial-{}.model".format(trial))
 
                 if step == trial_len: # time budget for episode was overstepped
                     loss_actor = loss_actor.cpu()
                     loss_critic = loss_actor.cpu()
-                    print("Timeout. Failed to complete in trial {}. Reward: {}, actor loss: {}, critic_loss: {}".format(trial,
-                                                                                                       reward,
-                                                                                                       loss_actor.data.numpy(),
-                                                                                                       loss_critic.data.numpy()))
-                    if len(dqn_agent.memory) >= dqn_agent.min_pool_size:
+                    print("Timeout. Failed to complete in trial {}. Episode reward: {}, actor loss: {}, critic_loss: {}".format(trial,
+                                                                                                                        episode_reward,
+                                                                                                                        loss_actor.data.numpy(),
+                                                                                                                        loss_critic.data.numpy()))
+                    if len(dqn_agent.memory) >= dqn_agent.batch_size:
                         loss_actor_total.append([loss_actor.item(), total_num_of_steps])
                         loss_critic_total.append([loss_critic.item(), total_num_of_steps])
                     break
@@ -732,14 +530,14 @@ def main():
                     loss_actor = loss_actor.cpu()
                     loss_critic = loss_actor.cpu()
                     print("Collision. Failed to complete in trial {}. Reward: {}, actor loss: {}, critic_loss: {}".format(trial,
-                                                                                                       reward,
+                                                                                                       episode_reward,
                                                                                                        loss_actor.data.numpy(),
                                                                                                        loss_critic.data.numpy()))
-                    if len(dqn_agent.memory) >= dqn_agent.min_pool_size:
+                    if len(dqn_agent.memory) >= dqn_agent.batch_size:
                         loss_actor_total.append([loss_actor.item(), total_num_of_steps])
                         loss_critic_total.append([loss_critic.item(), total_num_of_steps])
                     break
-
+            episode_rewards.append([episode_reward, trial])
 
             gc.collect()
 
@@ -747,8 +545,9 @@ def main():
         torch.save(dqn_agent.critic.state_dict(), './critic.pth')
         np.save('actor_loss', loss_actor_total)
         np.save('critic_loss', loss_critic_total)
+        np.save('episode_rewards', episode_rewards)
     elif simulate:
-        dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate, min_pool_size=min_pool_size)
+        dqn_agent = DQN(env, state_dim, action_dim, action_lim, gamma=gamma, epsilon=epsilon, tau=tau, learning_rate=learning_rate)
         dqn_agent.actor.load_state_dict(torch.load('./Trainings/latest/actor.pth'))
         cur_state = env.restart()
 

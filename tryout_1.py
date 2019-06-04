@@ -6,11 +6,12 @@ import matplotlib.pyplot as plt
 from ddpg_agent import Agent
 from labEnv import LabEnv, MobRob
 import gc
+import pickle
 
 
 def main():
     train = True
-    vrepHeadlessMode = False
+    vrepHeadlessMode = True
     simulate = False
     plot = False
 
@@ -22,8 +23,8 @@ def main():
     learn_every = 20  # number of steps after which he network update occurs
     num_learn = 10  # number of network updates done in a row
 
-    trials = 1000
-    trial_len = 300
+    episodes = 50
+    steps = 300
 
     desiredState = [-1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
 
@@ -43,18 +44,19 @@ def main():
             print('mobRob agent failed to initialize')
 
         total_num_of_steps = 0
-        actions = np.zeros((trials, trial_len+1, action_dim), dtype=np.float)
-        episode_rewards = []
+        actions = np.zeros((episodes, steps+1, action_dim), dtype=np.float)
         total_rewards = []
         save_rewards = []
-        for trial in range(trials):
+        for episode in range(episodes):
             cur_state = env.restart()
             mobRob.reset()
             start_time = time.time()
-            for step in range(trial_len+1):
+            reason = ''
+            episode_rewards = []
+            for step in range(steps+1):
                 total_num_of_steps += 1
-                action = mobRob.act(cur_state)[0]
-                actions[trial][step] = action
+                action = mobRob.act(cur_state)
+                actions[episode][step] = action
                 # print(action)
                 new_state, reward, done = env.step(action, desiredState)
                 mobRob.step(cur_state, action, reward, new_state, done)
@@ -66,35 +68,39 @@ def main():
                     for _ in range(num_learn):
                         mobRob.start_learn()
 
-                mean_score = np.mean(episode_rewards)
-                min_score = np.min(episode_rewards)
-                max_score = np.max(episode_rewards)
-                total_rewards.append(mean_score)
-                duration = time.time() - start_time
-
-                if step < trial_len and done and ~env.getCollision():
-                    print(
-                        '\rEpisode {}\tCOMPLETED\tMean episode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tDuration: {:.2f}'
-                        .format(trial, mean_score, min_score, max_score, duration))
+                if step < steps and done and ~env.getCollision():
+                    reason = 'COMPLETED'
                     break
 
-                if step == trial_len: # time budget for episode was overstepped
-                    print(
-                        '\rEpisode {}\tTIMEOUT\tMean episode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tDuration: {:.2f}'
-                        .format(trial, mean_score, min_score, max_score, duration))
+                if step == steps: # time budget for episode was overstepped
+                    reason = 'TIMEOUT  '
+                    break
 
                 if env.getCollision():
-                    print(
-                        '\rEpisode {}\tCOLLISION\tMean episode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tDuration: {:.2f}'
-                        .format(trial, mean_score, min_score, max_score, duration))
+                    reason = 'COLLISION'
+                    break
 
-            save_rewards.append([total_rewards[trial], trial])
+            mean_score = np.mean(episode_rewards)
+            min_score = np.min(episode_rewards)
+            max_score = np.max(episode_rewards)
+            total_rewards.append(mean_score)
+            duration = time.time() - start_time
+            save_rewards.append([total_rewards[episode], episode])
+
+            print(
+                '\rEpisode {}\t{}\tMean episode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tDuration: {:.2f}'
+                    .format(episode, reason, mean_score, min_score, max_score, duration))
 
             gc.collect()
 
-        torch.save(mobRob.actor.state_dict(), './actor.pth')
-        torch.save(mobRob.critic.state_dict(), './critic.pth')
+        torch.save(mobRob.actor_local.state_dict(), './actor.pth')
+        torch.save(mobRob.critic_local.state_dict(), './critic.pth')
         np.save('mean_episode_rewards', save_rewards)
+        fileSamples = open('samples.obj', 'w')
+        pickle.dump(mobRob.memory, fileSamples)
+        # read samples in
+        # filehandler = open(filename, 'r')
+        # object = pickle.load(filehandler)
     elif simulate:
         mobRob = MobRob(['MobRob'],
                         ['leftMotor', 'rightMotor'],

@@ -2,6 +2,7 @@ import numpy as np
 import random
 import copy
 from collections import namedtuple, deque
+import pickle
 
 from model import Actor, Critic
 
@@ -15,7 +16,8 @@ TAU = 1e-3              # for soft update of target parameters
 LR_ACTOR = 1e-3         # learning rate of the actor 
 LR_CRITIC = 1e-3        # learning rate of the critic
 WEIGHT_DECAY = 0.0000     # L2 weight decay
-BATCH_SIZE = 1024         # minibatch size
+BATCH_SIZE = 128         # minibatch size
+MIN_BUFFER_SIZE = 500   # minimal size of replay buffer
 BUFFER_SIZE = int(1e6)  # replay buffer size
 
 #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -73,7 +75,7 @@ class Agent():
         self.noise.reset()
 
     def start_learn(self):
-        if len(self.memory) > BATCH_SIZE:
+        if len(self.memory) > MIN_BUFFER_SIZE:
             experiences = self.memory.sample()
             self.learn(experiences, GAMMA)
         
@@ -131,6 +133,15 @@ class Agent():
         """
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
             target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
+
+    def save_samples(self):
+        fileSamples = open('samples.obj', 'w')
+        pickle.dump(self.memory, fileSamples)
+
+    def load_samples(self):
+        fileSamples = open('samples.obj', 'r')
+        return pickle.load(fileSamples)
+
 
 class OUNoise:
     """Ornstein-Uhlenbeck process."""

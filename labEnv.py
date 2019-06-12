@@ -22,6 +22,7 @@ class LabEnv:
         self.chassisCollisionHandle = -1
         self.headlessMode = vrepHeadlessMode
         self.init()
+        self.collision = False
 
     def init(self):
         if self.headlessMode:
@@ -55,41 +56,51 @@ class LabEnv:
         self.mobRob.initReadings()
         self.getCollision(vrep.simx_opmode_streaming)
 
-    def restart(self):
+    def restart(self, desiredState):
         self.stop()
         time.sleep(0.1)
         self.start()
-        state = self.mobRob.getState()
+        self.collision = False
+        state = self.mobRob.getState(desiredState)
         # self.pause()
         return state
 
     def computeReward(self, state, desiredState):
         done = False
-        positionReward = 1 - norm(np.array(desiredState[:2]) - np.array(state[:2])) ** 0.4  # TODO: include yaw angle reward
-        velocityReward = (1 - max(norm(np.array(state[3:5])), self.tolerance)) ** (1 / max(norm(np.array(desiredState[:2]) - np.array(state[:2])), self.tolerance))  # TODO: include yaw speed reward
-        reward = positionReward * velocityReward
-        if self.getCollision():
+        a = 1
+        lamb = 0.75
+        # Lamb = np.diag([1, 0.75, 0.75, 0.25, 1])
+        # positionReward = 1 - norm(np.array(desiredState[:2]) - np.array(state[:2])) ** 0.4  # TODO: include yaw angle reward
+        # velocityReward = (1 - max(norm(np.array(state[3:5])), self.tolerance)) ** (1 / max(norm(np.array(desiredState[:2]) - np.array(state[:2])), self.tolerance))  # TODO: include yaw speed reward
+        # reward = positionReward * 10
+        reward = lamb * np.exp(-1 / a**2 * np.transpose(state[:7] - desiredState).dot(state[:7] - desiredState))
+        if self.collision:
             reward -= 50
         if norm(np.array(desiredState[:2]) - np.array(state[:2])) < self.tolerance:
-            reward += 10
+            reward += 30
+            print("Position reached!")
+            done = True
             if norm(np.array(desiredState[3:5]) - np.array(state[3:5])) < self.tolerance:
+                print("Speed reached!")
                 done = True
-                reward += 10
+                reward += 50
 
         return reward, done
 
     def step(self, action, desiredState):
         self.mobRob.setMotorsTargetVelocities(action)
-        # vrep.simxSynchronousTrigger(self.clientId)
-        state = self.mobRob.getState()
-        groundTruthState = self.mobRob.getGroundTruthState()
         vrep.simxSynchronousTrigger(self.clientId)
+        state = self.mobRob.getState(desiredState)
+        groundTruthState = self.mobRob.getGroundTruthState()
+        # vrep.simxSynchronousTrigger(self.clientId)
+        self.getCollision()
         reward, done = self.computeReward(groundTruthState, desiredState)
 
         return state, reward, done
 
     def getCollision(self, vrepMode=vrep.simx_opmode_buffer):
         _, collisionOccured = vrep.simxReadCollision(self.clientId, self.chassisCollisionHandle, vrepMode)
+        self.collision = collisionOccured
         return collisionOccured
 
     def start(self):
@@ -136,11 +147,18 @@ class MobRob:
     def calculateDistance(self, sensorReading):
         return norm(sensorReading)
 
-    def getState(self, vrepMode=vrep.simx_opmode_buffer):
+    def getState(self, desiredState, vrepMode=vrep.simx_opmode_buffer):
         state = []
         _, _, proxSensorReadings = self.getProximitySensorsReadings(vrepMode)
+        position = self.getPosition(vrepMode)
+        orientation = self.getOrientation(vrepMode)
+        velocities = self.getVelocities(vrepMode)
+        state = np.append(state, position)  # TODO: just for test run
+        state = np.append(state, orientation)
+        state = np.append(state, velocities)   # TODO: just for test run
+        state = np.append(state, state - desiredState)  # error vector
         state = np.append(state, proxSensorReadings)
-        return state  # proxySensor0...proxySensor5
+        return state  # x,y,yaw,v_x,v_y,v_yaw,e_x,e_y,e_yaw,e_vx,e_vy,e_vyaw,proxySensor0...proxySensor5
 
     def getGroundTruthState(self, vrepMode=vrep.simx_opmode_buffer):
         state = self.getPosition(vrepMode)
@@ -158,7 +176,7 @@ class MobRob:
 
     def getVelocities(self, vrepMode):
         _, linear, angular = vrep.simxGetObjectVelocity(self.clientId, self.mobRobHandle, vrepMode)
-        velocities = linear[1:]
+        velocities = linear[:2]
         velocities.append((angular[-1]))
         return velocities # returns vx, vy and yawVel
 

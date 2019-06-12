@@ -8,23 +8,23 @@ from labEnv import LabEnv, MobRob
 import gc
 import pickle
 
-
+#  TODO: check high rewards in collisions!!!!!!!!!!!!!!!!!!!!!!!!!
 def main():
     train = True
     vrepHeadlessMode = True
     simulate = False
-    plot = False
+    plot = True
 
-    state_dim = 6  # TODO: simulate battery? 6 are the number of proxy sensors
+    state_dim = 18  # TODO: simulate battery? 6 are the number of proxy sensors    # x, y, vx, vy, v_yaw, prox 0 ... prox5
     action_dim = 2
     action_space = np.array([[-2, 2], [-2, 2]])
     action_lim = [-2.0, 2.0]  # 2 o/sec is the max angular speed of each motor, max. linear velocity is 0.5 m/s
 
-    learn_every = 20  # number of steps after which he network update occurs
-    num_learn = 10  # number of network updates done in a row
+    learn_every = 1  # number of steps after which the network update occurs [20]
+    num_learn = 1  # number of network updates done in a row [10]
 
-    episodes = 50
-    steps = 300
+    episodes = 1000
+    steps = 500
 
     desiredState = [-1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
 
@@ -48,7 +48,7 @@ def main():
         total_rewards = []
         save_rewards = []
         for episode in range(episodes):
-            cur_state = env.restart()
+            cur_state = env.restart(desiredState)
             mobRob.reset()
             start_time = time.time()
             reason = ''
@@ -68,7 +68,7 @@ def main():
                     for _ in range(num_learn):
                         mobRob.start_learn()
 
-                if step < steps and done and ~env.getCollision():
+                if step < steps and done and ~env.collision:
                     reason = 'COMPLETED'
                     break
 
@@ -76,7 +76,7 @@ def main():
                     reason = 'TIMEOUT  '
                     break
 
-                if env.getCollision():
+                if env.collision:
                     reason = 'COLLISION'
                     break
 
@@ -96,11 +96,6 @@ def main():
         torch.save(mobRob.actor_local.state_dict(), './actor.pth')
         torch.save(mobRob.critic_local.state_dict(), './critic.pth')
         np.save('mean_episode_rewards', save_rewards)
-        fileSamples = open('samples.obj', 'w')
-        pickle.dump(mobRob.memory, fileSamples)
-        # read samples in
-        # filehandler = open(filename, 'r')
-        # object = pickle.load(filehandler)
     elif simulate:
         mobRob = MobRob(['MobRob'],
                         ['leftMotor', 'rightMotor'],
@@ -130,18 +125,18 @@ def main():
             cur_state = new_state
 
     elif plot:
-        mean_episode_rewards = np.load('./Trainings/latest/mean_episode_rewards.npy')
+        mean_episode_rewards = np.load('./mean_episode_rewards.npy')
 
         f, ax = plt.subplots(1, sharex=True, sharey=False)
 
         # # Always
-        ax[2].set_ylabel("Mean episode rewards")
-        ax[-1].set_xlabel("Number of trials")
+        ax.set_ylabel("Mean episode rewards")
+        ax.set_xlabel("Number of trials")
 
         # Highlight the starting x axis
-        ax[2].axhline(0, color="#AAAAAA")
-        ax[2].plot(mean_episode_rewards[:, 1], mean_episode_rewards[:, 0])
-        ax[2].grid(True)
+        ax.axhline(0, color="#AAAAAA")
+        ax.plot(mean_episode_rewards[:, 1], mean_episode_rewards[:, 0])
+        ax.grid(True)
 
         plt.show()
 

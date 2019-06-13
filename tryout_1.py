@@ -8,7 +8,7 @@ from labEnv import LabEnv, MobRob
 import gc
 import pickle
 
-#  TODO: check high rewards in collisions!!!!!!!!!!!!!!!!!!!!!!!!!
+
 def main():
     train = True
     vrepHeadlessMode = True
@@ -47,6 +47,7 @@ def main():
         actions = np.zeros((episodes, steps+1, action_dim), dtype=np.float)
         total_rewards = []
         save_rewards = []
+        durations = []
         for episode in range(episodes):
             cur_state = env.restart(desiredState)
             mobRob.reset()
@@ -85,11 +86,17 @@ def main():
             max_score = np.max(episode_rewards)
             total_rewards.append(mean_score)
             duration = time.time() - start_time
+            durations.append(duration)
             save_rewards.append([total_rewards[episode], episode])
+            eta = np.mean(durations)*(episodes-episode) / 60 / 60
+            if eta < 1.0:
+                etaString = str(np.round(eta * 60), 2) + " min"
+            else:
+                etaString = str(np.round(eta, 2)) + " h"
 
             print(
-                '\rEpisode {}\t{}\tMean episode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tDuration: {:.2f}'
-                    .format(episode, reason, mean_score, min_score, max_score, duration))
+                '\rEpisode {}\t{}\tMean episode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tDuration: {:.2f}\tETA: {}'
+                    .format(episode, reason, mean_score, min_score, max_score, duration, etaString))
 
             gc.collect()
 

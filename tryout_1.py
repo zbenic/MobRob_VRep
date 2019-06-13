@@ -8,11 +8,11 @@ from labEnv import LabEnv, MobRob
 import gc
 import pickle
 
-#  TODO: check high rewards in collisions!!!!!!!!!!!!!!!!!!!!!!!!!
+
 def main():
-    train = True
-    vrepHeadlessMode = True
-    simulate = False
+    train = False
+    vrepHeadlessMode = False
+    simulate = True
     plot = True
 
     state_dim = 18  # TODO: simulate battery? 6 are the number of proxy sensors    # x, y, vx, vy, v_yaw, prox 0 ... prox5
@@ -23,7 +23,7 @@ def main():
     learn_every = 1  # number of steps after which the network update occurs [20]
     num_learn = 1  # number of network updates done in a row [10]
 
-    episodes = 1000
+    episodes = 2000
     steps = 500
 
     desiredState = [-1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
@@ -47,6 +47,7 @@ def main():
         actions = np.zeros((episodes, steps+1, action_dim), dtype=np.float)
         total_rewards = []
         save_rewards = []
+        durations = []
         for episode in range(episodes):
             cur_state = env.restart(desiredState)
             mobRob.reset()
@@ -85,11 +86,17 @@ def main():
             max_score = np.max(episode_rewards)
             total_rewards.append(mean_score)
             duration = time.time() - start_time
+            durations.append(duration)
             save_rewards.append([total_rewards[episode], episode])
+            eta = np.mean(durations)*(episodes-episode) / 60 / 60
+            if eta < 1.0:
+                etaString = str(np.round(eta * 60, 2)) + " min"
+            else:
+                etaString = str(np.round(eta, 2)) + " h"
 
             print(
-                '\rEpisode {}\t{}\tMean episode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tDuration: {:.2f}'
-                    .format(episode, reason, mean_score, min_score, max_score, duration))
+                '\rEpisode {}\t{}\tMean episode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tDuration: {:.2f}\tETA: {}'
+                    .format(episode, reason, mean_score, min_score, max_score, duration, etaString))
 
             gc.collect()
 
@@ -111,14 +118,14 @@ def main():
         else:
             print('mobRob agent failed to initialize')
 
-        mobRob.actor.load_state_dict(torch.load('./Trainings/latest/actor.pth'))
-        cur_state = env.restart()
+        mobRob.actor_local.load_state_dict(torch.load('./actor.pth'))
+        cur_state = env.restart(desiredState)
         mobRob.reset()
 
         for step in range(100000):
             # total_num_of_steps += 1
             # action = dqn_agent.act(cur_state, trial)
-            action = mobRob.step(cur_state)
+            action = mobRob.act(cur_state, add_noise=False)
             # actions[trial][step] = action
             # print(action)
             new_state, _, done = env.step(action, desiredState)

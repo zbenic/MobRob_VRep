@@ -3,28 +3,26 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-from ddpg_agent import Agent
+from PPO_continuous import PPO, Memory
 from labEnv import LabEnv, MobRob
 import gc
 import pickle
 
 
 def main():
-    train = False
-    vrepHeadlessMode = False
+    train = True
+    vrepHeadlessMode = True
     simulate = True
     plot = True
 
     state_dim = 18  # TODO: simulate battery? 6 are the number of proxy sensors    # x, y, vx, vy, v_yaw, prox 0 ... prox5
     action_dim = 2
-    action_space = np.array([[-2, 2], [-2, 2]])
-    action_lim = [-2.0, 2.0]  # 2 o/sec is the max angular speed of each motor, max. linear velocity is 0.5 m/s
-
-    learn_every = 1  # number of steps after which the network update occurs [20]
-    num_learn = 1  # number of network updates done in a row [10]
 
     episodes = 2000
     steps = 500
+
+    learn_every = 128 # number of steps after which the network update occurs [20]
+    num_learn = 1  # number of network updates done in a row [10]
 
     desiredState = [-1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
 
@@ -34,9 +32,8 @@ def main():
                         ['proximitySensor0', 'proximitySensor1', 'proximitySensor2', 'proximitySensor3', 'proximitySensor4',
                          'proximitySensor5'])
         env = LabEnv(mobRob, vrepHeadlessMode)
-
-        random_seed = 7
-        mobRob = Agent(state_dim, action_dim, random_seed)
+        memory = Memory()
+        mobRob = PPO(state_dim, action_dim)
 
         if mobRob is not None:
             print('mobRob agent initialized')
@@ -50,24 +47,23 @@ def main():
         durations = []
         for episode in range(episodes):
             cur_state = env.restart(desiredState)
-            mobRob.reset()
             start_time = time.time()
             reason = ''
             episode_rewards = []
             for step in range(steps+1):
                 total_num_of_steps += 1
-                action = mobRob.act(cur_state)
+                action = mobRob.select_action(cur_state, memory)
                 actions[episode][step] = action
                 # print(action)
                 new_state, reward, done = env.step(action, desiredState)
-                mobRob.step(cur_state, action, reward, new_state, done)
+                memory.rewards.append(reward)
 
                 cur_state = new_state
                 episode_rewards.append(reward)
 
-                if step % learn_every == 0:
+                if total_num_of_steps % learn_every == 0:
                     for _ in range(num_learn):
-                        mobRob.start_learn()
+                        mobRob.update(memory)
 
                 if step < steps and done and ~env.collision:
                     reason = 'COMPLETED'
@@ -111,7 +107,7 @@ def main():
         env = LabEnv(mobRob, vrepHeadlessMode)
 
         random_seed = 7
-        mobRob = Agent(state_dim, action_dim, random_seed)
+        mobRob = PPO(state_dim, action_dim)
 
         if mobRob is not None:
             print('mobRob agent initialized')

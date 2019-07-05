@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import sys, os
 
-sys.path.append("G:\GIT\TD3-PyTorch-BipedalWalker-v2")
+sys.path.append("C:/visageGIT\TD3-PyTorch-BipedalWalker-v2")
 from TD3 import TD3
 from utils import ReplayBuffer
 
@@ -14,7 +14,7 @@ import gc
 
 
 def main():
-    train = True
+    train = False
     vrepHeadlessMode = False
     simulate = True
     plot = True
@@ -24,15 +24,17 @@ def main():
     log_interval = 10           # print avg reward after interval
     random_seed = 0
     gamma = 0.99                # discount for future rewards
+    min_batch_size = 10000
     batch_size = 100            # num of transitions sampled from replay buffer
     lr = 0.001
-    exploration_noise = 0.1
+    exploration_noise = 0.1     # was 0.1
     polyak = 0.995              # target policy update parameter (1-tau)
     policy_noise = 0.2          # target policy smoothing noise
     noise_clip = 0.5
     policy_delay = 2            # delayed policy updates parameter
-    episodes = 2000         # max num of episodes
-    steps = 500       # max timesteps in one episode
+    episodes = 10000         # max num of episodes
+    steps = 300       # max timesteps in one episode
+    iterations_per_step = 1
     directory = "./preTrained/{}".format(env_name) # save trained models
     filename = "TD3_{}_{}".format(env_name, random_seed)
     ###################################
@@ -40,7 +42,7 @@ def main():
     if not os.path.isdir(directory):
         os.makedirs(directory)
 
-    state_dim = 6  # TODO: simulate battery? 6 are the number of proxy sensors    # x, y, vx, vy, v_yaw, prox 0 ... prox5
+    state_dim = 12  # TODO: simulate battery? 6 are the number of proxy sensors    # x, y, vx, vy, v_yaw, prox 0 ... prox5
     action_dim = 2
     min_action = float(-2)
     max_action = float(2)
@@ -79,6 +81,7 @@ def main():
             start_time = time.time()
             reason = ''
             episode_rewards = []
+            finished_episode = False
             for step in range(steps+1):
                 total_num_of_steps += 1
 
@@ -96,18 +99,25 @@ def main():
 
                 episode_rewards.append(reward)
 
-                # if episode is done then update policy:
-                if done or step == (steps - 1):
-                    policy.update(replay_buffer, step, batch_size, gamma, polyak, policy_noise, noise_clip, policy_delay)
-                    reason = 'TIMEOUT  '
-                    break
+                # if replay_buffer.size >= min_batch_size:
+                #     policy.update(replay_buffer, step, batch_size, gamma, polyak, policy_noise, noise_clip,
+                #               policy_delay)
 
-                if step < steps and done and ~env.collision:
+                if step <= steps and done and ~env.collision:
                     reason = 'COMPLETED'
-                    break
+                    finished_episode = True
+
+                if step == steps:
+                    reason = 'TIMEOUT  '
+                    finished_episode = True
 
                 if env.collision:
                     reason = 'COLLISION'
+                    finished_episode = True
+
+                if finished_episode:
+                    if replay_buffer.size >= min_batch_size:
+                        policy.update(replay_buffer, step, batch_size, gamma, polyak, policy_noise, noise_clip, policy_delay)
                     break
 
             episode_reward = np.sum(episode_rewards)
@@ -139,7 +149,7 @@ def main():
 
             # if average reward > 300 then save and stop traning:
             if len(total_rewards) >= log_interval:
-                if avg_reward >= 500:
+                if avg_reward >= 1000:
                     print("########## Solved! ###########")
                     name = filename + '_solved'
                     policy.save(directory, name)
@@ -157,7 +167,7 @@ def main():
         max_timesteps = 2000
 
         filename = "TD3_{}_{}".format(env_name, random_seed)
-        filename += '_solved'
+        # filename += '_solved'
         directory = "./preTrained/{}".format(env_name)
 
         mobRob = MobRob(['MobRob'],
@@ -180,11 +190,11 @@ def main():
             state = env.reset(desiredState)
             for step in range(max_timesteps):
                 action = policy.select_action(state)
-                state, reward, done, _ = env.step(action,desiredState)
+                state, reward, done = env.step(action, desiredState)
                 ep_reward += reward
 
-                if done:
-                    break
+                # if done:
+                #     break
 
             print('Episode: {}\tReward: {}'.format(episode, int(ep_reward)))
             ep_reward = 0
@@ -195,8 +205,8 @@ def main():
         f, ax = plt.subplots(1, sharex=True, sharey=False)
 
         # # Always
-        ax.set_ylabel("Mean episode rewards")
-        ax.set_xlabel("Number of trials")
+        ax.set_ylabel("Episode reward")
+        ax.set_xlabel("Number of episodes")
 
         # Highlight the starting x axis
         ax.axhline(0, color="#AAAAAA")

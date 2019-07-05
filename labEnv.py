@@ -18,7 +18,10 @@ class LabEnv:
     def __init__(self, mobRob, vrepHeadlessMode=False):
         self.clientId = -1
         self.mobRob = mobRob
-        self.tolerance = 0.05
+        self.positionTolerance = 0.05
+        self.velocityTolerance = 0.01
+        self.yawTolerance = 0.05
+        self.yawRateTolerance = 0.1 # [rad/s]
         self.chassisCollisionHandle = -1
         self.headlessMode = vrepHeadlessMode
         self.init()
@@ -26,9 +29,9 @@ class LabEnv:
 
     def init(self):
         if self.headlessMode:
-            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'G:/GIT/MobRob/Scene/labScene.ttt'])
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labScene.ttt'])
         else:
-            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'G:/GIT/MobRob/Scene/labScene.ttt'])
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labScene.ttt'])
 
         time.sleep(10)
         print('Simulation started')
@@ -71,20 +74,29 @@ class LabEnv:
         a = 1
         lamb = 0.75
         # Lamb = np.diag([1, 0.75, 0.75, 0.25, 1])
-        # positionReward = 1 - norm(np.array(desiredState[:2]) - np.array(state[:2])) ** 0.4  # TODO: include yaw angle reward
-        # velocityReward = (1 - max(norm(np.array(state[3:5])), self.tolerance)) ** (1 / max(norm(np.array(desiredState[:2]) - np.array(state[:2])), self.tolerance))  # TODO: include yaw speed reward
+        positionReward = 1 - norm(np.array(desiredState[:2]) - np.array(state[:2])) ** 0.4  # TODO: include yaw angle reward
+        yawReward = 1 - abs(desiredState[2] - state[2]) ** 0.4
+        velocityReward = (1 - max(norm(np.array(desiredState[3:5])-np.array(state[3:5])), self.velocityTolerance)) ** (1 / max(norm(np.array(desiredState[:2]) - np.array(state[:2])), self.positionTolerance))  # TODO: include yaw speed reward
+        # yawRateReward = (1 - max(abs(desiredState[5]-state[5]), self.yawRateTolerance)) ** (1 / max(abs(desiredState[2] - np.array(state[2])), self.yawTolerance))  # TODO: include yaw speed reward
         # reward = positionReward * 10
-        reward = lamb * np.exp(-1 / a**2 * np.transpose(state[:7] - desiredState).dot(state[:7] - desiredState))
+        # reward = lamb * np.exp(-1 / a**2 * np.transpose(state[:7] - desiredState).dot(state[:7] - desiredState))
+        reward = positionReward * velocityReward * yawReward
         if self.collision:
             reward -= 50
-        if norm(np.array(desiredState[:2]) - np.array(state[:2])) < self.tolerance:
-            reward += 30
+        if norm(np.array(desiredState[:2]) - np.array(state[:2])) < self.positionTolerance:
+            reward += 100
             print("Position reached!")
-            done = True
-            if norm(np.array(desiredState[3:5]) - np.array(state[3:5])) < self.tolerance:
+            if norm(np.array(desiredState[3:5]) - np.array(state[3:5])) < self.velocityTolerance:
                 print("Speed reached!")
-                done = True
-                reward += 50
+                reward += 100
+                if abs(desiredState[3] - state[3]) < self.yawTolerance:
+                    reward += 50
+                    print("Yaw reached!")
+                    done = True
+                    # if abs(desiredState[5] - state[5]) < self.yawRateTolerance:
+                    #     reward += 50
+                    #     print("Yaw rate reached!")
+
 
         return reward, done
 
@@ -125,6 +137,8 @@ class MobRob:
         self.robotName = robotName
         self.motorsNaming = motorsNaming
         self.proxSensorsNaming = proxSensorsNaming
+        self.minProxSensorDistance = 0.1
+        self.maxProxSensorDistance = 0.8
         self.mobRobHandle = -1
 
     def initMotors(self):
@@ -151,12 +165,13 @@ class MobRob:
     def getState(self, desiredState, vrepMode=vrep.simx_opmode_buffer):
         state = []
         _, _, proxSensorReadings = self.getProximitySensorsReadings(vrepMode)
+        proxSensorReadings = np.clip(proxSensorReadings, self.minProxSensorDistance, self.maxProxSensorDistance)
         position = self.getPosition(vrepMode)
         orientation = self.getOrientation(vrepMode)
         velocities = self.getVelocities(vrepMode)
-        # state = np.append(state, position)  # TODO: just for test run
-        # state = np.append(state, orientation)
-        # state = np.append(state, velocities)   # TODO: just for test run
+        state = np.append(state, position)  # TODO: just for test run
+        state = np.append(state, orientation)
+        state = np.append(state, velocities)   # TODO: just for test run
         # state = np.append(state, state - desiredState)  # error vector
         state = np.append(state, proxSensorReadings)
         return state  # x,y,yaw,v_x,v_y,v_yaw,e_x,e_y,e_yaw,e_vx,e_vy,e_vyaw,proxySensor0...proxySensor5

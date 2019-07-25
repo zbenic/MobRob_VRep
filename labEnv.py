@@ -29,9 +29,9 @@ class LabEnv:
 
     def init(self):
         if self.headlessMode:
-            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labScene.ttt'])
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneComplex.ttt'])
         else:
-            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labScene.ttt'])
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneComplex.ttt'])
 
         time.sleep(10)
         print('Simulation started')
@@ -58,6 +58,7 @@ class LabEnv:
                                                                                               "MobRobChassis",
                                                                                               vrep.simx_opmode_blocking)
         self.mobRob.initReadings()
+        self.mobRob.initDone()
         self.getCollision(vrep.simx_opmode_streaming)
 
     def reset(self, desiredState):
@@ -69,33 +70,42 @@ class LabEnv:
         # self.pause()
         return state
 
-    def computeReward(self, state, desiredState):
+    def computeReward(self, state, desiredState, action):
         done = False
-        a = 1
-        lamb = 0.75
+        reward = 0
+        # a = 1
+        # lamb = 0.75
         # Lamb = np.diag([1, 0.75, 0.75, 0.25, 1])
-        positionReward = 1 - norm(np.array(desiredState[:2]) - np.array(state[:2])) ** 0.4  # TODO: include yaw angle reward
-        yawReward = 1 - abs(desiredState[2] - state[2]) ** 0.4
-        velocityReward = (1 - max(norm(np.array(desiredState[3:5])-np.array(state[3:5])), self.velocityTolerance)) ** (1 / max(norm(np.array(desiredState[:2]) - np.array(state[:2])), self.positionTolerance))  # TODO: include yaw speed reward
+        # positionReward = 1 - norm(np.array(desiredState[:2]) - np.array(state[:2])) ** 0.4  # TODO: include yaw angle reward
+        # yawReward = 1 - abs(desiredState[2] - state[2]) ** 0.4
+        # velocityReward = (1 - max(norm(np.array(desiredState[3:5])-np.array(state[3:5])), self.velocityTolerance)) ** (1 / max(norm(np.array(desiredState[:2]) - np.array(state[:2])), self.positionTolerance))  # TODO: include yaw speed reward
         # yawRateReward = (1 - max(abs(desiredState[5]-state[5]), self.yawRateTolerance)) ** (1 / max(abs(desiredState[2] - np.array(state[2])), self.yawTolerance))  # TODO: include yaw speed reward
         # reward = positionReward * 10
         # reward = lamb * np.exp(-1 / a**2 * np.transpose(state[:7] - desiredState).dot(state[:7] - desiredState))
-        reward = positionReward * velocityReward * yawReward
+        # reward = positionReward * velocityReward
+        if state[3] > 0:
+            reward += 1
+        elif all(i == 0 for i in state[3:5]):
+            reward -= 4
+        else:
+            reward -= 2
+
         if self.collision:
             reward -= 50
         if norm(np.array(desiredState[:2]) - np.array(state[:2])) < self.positionTolerance:
             reward += 100
             print("Position reached!")
-            if norm(np.array(desiredState[3:5]) - np.array(state[3:5])) < self.velocityTolerance:
-                print("Speed reached!")
-                reward += 100
-                if abs(desiredState[3] - state[3]) < self.yawTolerance:
-                    reward += 50
-                    print("Yaw reached!")
-                    done = True
-                    # if abs(desiredState[5] - state[5]) < self.yawRateTolerance:
-                    #     reward += 50
-                    #     print("Yaw rate reached!")
+            done = True
+            # if norm(np.array(desiredState[3:5]) - np.array(state[3:5])) < self.velocityTolerance:
+            #     print("Speed reached!")
+            #     reward += 100
+            #     done = True
+            #     if abs(desiredState[3] - state[3]) < self.yawTolerance:
+            #         reward += 50
+            #         print("Yaw reached!")
+            #         # if abs(desiredState[5] - state[5]) < self.yawRateTolerance:
+            #         #     reward += 50
+            #         #     print("Yaw rate reached!")
 
 
         return reward, done
@@ -107,7 +117,7 @@ class LabEnv:
         groundTruthState = self.mobRob.getGroundTruthState()
         # vrep.simxSynchronousTrigger(self.clientId)
         self.getCollision()
-        reward, done = self.computeReward(groundTruthState, desiredState)
+        reward, done = self.computeReward(groundTruthState, desiredState, action)
 
         return state, reward, done
 
@@ -140,6 +150,8 @@ class MobRob:
         self.minProxSensorDistance = 0.1
         self.maxProxSensorDistance = 0.8
         self.mobRobHandle = -1
+        self.transformationMatrix = np.zeros((4, 4))
+        self.initializationDone = False
 
     def initMotors(self):
         for motorName in self.motorsNaming:
@@ -159,10 +171,14 @@ class MobRob:
         _ = self.getOrientation(vrep.simx_opmode_streaming)
         _ = self.getVelocities(vrep.simx_opmode_streaming)
 
+    def initDone(self):
+        self.initializationDone = True
+
     def calculateDistance(self, sensorReading):
         return norm(sensorReading)
 
     def getState(self, desiredState, vrepMode=vrep.simx_opmode_buffer):
+        self.transformationMatrix = self.getTransformationMatrix()
         state = []
         _, _, proxSensorReadings = self.getProximitySensorsReadings(vrepMode)
         proxSensorReadings = np.clip(proxSensorReadings, self.minProxSensorDistance, self.maxProxSensorDistance)
@@ -174,6 +190,7 @@ class MobRob:
         state = np.append(state, velocities)   # TODO: just for test run
         # state = np.append(state, state - desiredState)  # error vector
         state = np.append(state, proxSensorReadings)
+        self.transformationMatrix = self.getTransformationMatrix()
         return state  # x,y,yaw,v_x,v_y,v_yaw,e_x,e_y,e_yaw,e_vx,e_vy,e_vyaw,proxySensor0...proxySensor5
 
     def getGroundTruthState(self, vrepMode=vrep.simx_opmode_buffer):
@@ -192,9 +209,12 @@ class MobRob:
 
     def getVelocities(self, vrepMode):
         _, linear, angular = vrep.simxGetObjectVelocity(self.clientId, self.mobRobHandle, vrepMode)
+        if self.initializationDone:
+            linear = self.getLinearVelocityWrtRobotFrame(linear)
+            linear = list(np.array(linear).reshape(-1,))
         velocities = linear[:2]
         velocities.append((angular[-1]))
-        return velocities # returns vx, vy and yawVel
+        return velocities  # returns vx, vy and yawVel
 
     def getProximitySensorsReadings(self, vrepMode):
         errorCodes = []
@@ -208,6 +228,24 @@ class MobRob:
             distanceToDetectedPoint.append(self.calculateDistance(detectedPoint))
 
         return errorCodes, detectionStates, distanceToDetectedPoint
+
+    def getTransformationMatrix(self):
+        [_, _, retFloats, _, _] = vrep.simxCallScriptFunction(self.clientId, 'HelperScripts',
+                                                              vrep.sim_scripttype_childscript,
+                                                              'getMobRobMatrix', [], [], [],
+                                                              '',
+                                                              vrep.simx_opmode_blocking)
+        transformationMat = np.matrix(retFloats).reshape((3, 4))
+        lastRow = np.matrix([0, 0, 0, 1])
+        transformationMat = np.vstack([transformationMat, lastRow])
+        return transformationMat
+
+    def getLinearVelocityWrtRobotFrame(self, linearVelocities):
+        linearVelocities.append(1)  # appending 1 to get homogeneous coordinates
+        linearVelocities = np.matrix(linearVelocities).transpose()
+        invTransformationMatrix = np.linalg.inv(self.transformationMatrix)
+
+        return np.dot(invTransformationMatrix, linearVelocities)
 
     def setMotorsForces(self, motorsForces):
         for motorIdx in range(len(self.motors)):

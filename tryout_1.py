@@ -14,7 +14,7 @@ import gc
 
 
 def main():
-    train = False
+    train = True
     vrepHeadlessMode = False
     simulate = True
     plot = True
@@ -33,7 +33,7 @@ def main():
     noise_clip = 0.5
     policy_delay = 2            # delayed policy updates parameter
     episodes = 10000         # max num of episodes
-    steps = 300       # max timesteps in one episode
+    steps = 1000       # max timesteps in one episode
     iterations_per_step = 1
     directory = "./preTrained/{}".format(env_name) # save trained models
     filename = "TD3_{}_{}".format(env_name, random_seed)
@@ -47,7 +47,7 @@ def main():
     min_action = float(-2)
     max_action = float(2)
 
-    desiredState = [-1.4, 0.3, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
+    desiredState = [0.8, 0.7, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
 
     if train:
         mobRob = MobRob(['MobRob'],
@@ -149,22 +149,24 @@ def main():
 
             # if average reward > 300 then save and stop traning:
             if len(total_rewards) >= log_interval:
-                if avg_reward >= 1000:
+                if avg_reward >= 1100:
                     print("########## Solved! ###########")
                     name = filename + '_solved'
                     policy.save(directory, name)
+                    replay_buffer.save()
                     log_f.close()
                     break
 
-            if episode > 500:
+            if episode > 500 and episode % log_interval == 0:
                 policy.save(directory, filename)
+                replay_buffer.save()
 
         np.save('mean_episode_rewards', save_rewards)
     elif simulate:
         random_seed = 0
         n_episodes = 3
         lr = 0.002
-        max_timesteps = 2000
+        max_timesteps = 200
 
         filename = "TD3_{}_{}".format(env_name, random_seed)
         # filename += '_solved'
@@ -193,11 +195,12 @@ def main():
                 state, reward, done = env.step(action, desiredState)
                 ep_reward += reward
 
-                # if done:
-                #     break
+                if done:
+                    break
 
             print('Episode: {}\tReward: {}'.format(episode, int(ep_reward)))
             ep_reward = 0
+        env.stop()
 
     elif plot:
         mean_episode_rewards = np.load('./mean_episode_rewards.npy')

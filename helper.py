@@ -537,7 +537,7 @@ class LabEnv:
         self.mobRob.setMotorsTargetVelocities(action)
         # vrep.simxSynchronousTrigger(self.clientId)
         state = self.mobRob.getState()
-        groundTruthState = self.mobRob.getGroundTruthState()
+        groundTruthState = self.mobRob.getGroundTruthState(state)
         vrep.simxSynchronousTrigger(self.clientId)
         reward, done = self.computeReward(groundTruthState, desiredState)
 

@@ -87,7 +87,7 @@ def setMotorsTargetVelocities(clientId, motors, leftMotorTargetVelocity, rightMo
     vrep.simxSetJointTargetVelocity(clientId, motors[1], rightMotorTargetVelocity, vrep.simx_opmode_oneshot) # set the joint target velocity
 
 
-subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'G:/GIT/MobRob/Scene/labScene.ttt'])
+subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'c:/VisageGIT/MobRob_VRep/Scene/labScene.ttt'])
 time.sleep(10)
 
 print('Program started')
@@ -114,6 +114,8 @@ setMotorsForces(clientId, motors, 100, 100)
 
 _, robotHandle = vrep.simxGetObjectHandle(clientId, "MobRob", vrep.simx_opmode_blocking)
 _, _ = vrep.simxGetObjectPosition(clientId, robotHandle, -1, vrep.simx_opmode_streaming)
+_, _, _ = vrep.simxGetObjectVelocity(clientId, robotHandle, vrep.simx_opmode_streaming)
+_, _ = vrep.simxGetObjectOrientation(clientId, robotHandle, -1, vrep.simx_opmode_streaming)
 
 simStep = 0
 # errorCodeCameraImage, frontCameraResolution, frontCameraImage = vrep.simxGetVisionSensorImage(clientId, frontRobotCamera, 0, vrep.simx_opmode_streaming)
@@ -129,9 +131,20 @@ while simStep < 10000:
 
     errorCodeProx, detectionStatesProx, detectedPointsProx = getProximitySensorsReadings(clientId, proxSensors)
     _, readings = vrep.simxGetObjectPosition(clientId, robotHandle, -1, vrep.simx_opmode_buffer)
+    _, velocity, _ = vrep.simxGetObjectVelocity(clientId, robotHandle, vrep.simx_opmode_buffer)
+    _, orientation = vrep.simxGetObjectPosition(clientId, robotHandle, -1, vrep.simx_opmode_buffer)
+
+    [res, retInts, retFloats, retStrings, retBuffer] = vrep.simxCallScriptFunction(clientId, 'HelperScripts',
+                                                                                   vrep.sim_scripttype_childscript,
+                                                                                   'getMobRobMatrix', [], [], [], '',
+                                                                                   vrep.simx_opmode_blocking)
+
+    print(retFloats)
+
 
     vrep.simxSynchronousTrigger(clientId) # trigger next simulation step. Above commands will be applied
-    print(readings)
+    print(velocity[0])
+    print(orientation[2])
     simStep += 1
 
 vrep.simxPauseSimulation(clientId, vrep.simx_opmode_oneshot) # stop the simulation

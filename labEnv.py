@@ -90,7 +90,7 @@ class LabEnv:
         else:
             reward -= 2
 
-        if state[4] > state[3]:
+        if abs(state[4]) > abs(state[3]):
             reward -= 2
 
         if np.sign(action[0]) != np.sign(action[1]):
@@ -119,13 +119,13 @@ class LabEnv:
     def step(self, action, desiredState):
         self.mobRob.setMotorsTargetVelocities(action)
         vrep.simxSynchronousTrigger(self.clientId)
-        state = self.mobRob.getState(desiredState)
+        passed, state = self.mobRob.getState(desiredState)
         groundTruthState = self.mobRob.getGroundTruthState(state)
         # vrep.simxSynchronousTrigger(self.clientId)
         self.getCollision()
         reward, done = self.computeReward(groundTruthState, desiredState, action)
 
-        return state, reward, done
+        return state, reward, done, passed
 
     def getCollision(self, vrepMode=vrep.simx_opmode_buffer):
         _, collisionOccured = vrep.simxReadCollision(self.clientId, self.chassisCollisionHandle, vrepMode)
@@ -185,8 +185,10 @@ class MobRob:
         return norm(sensorReading)
 
     def getState(self, desiredState, vrepMode=vrep.simx_opmode_buffer):
-        self.invertedTransformationMatrix = self.getInvertedTransformationMatrix()
+        passed, self.invertedTransformationMatrix = self.getInvertedTransformationMatrix()
         state = []
+        if passed == False:
+            return False, state
         _, _, proxSensorReadings = self.getProximitySensorsReadings(vrepMode)
         proxSensorReadings = np.clip(proxSensorReadings, self.minProxSensorDistance, self.maxProxSensorDistance)
         position = self.getPosition(vrepMode)
@@ -198,7 +200,7 @@ class MobRob:
         # state = np.append(state, state - desiredState)  # error vector
         state = np.append(state, proxSensorReadings)
         self.transformationMatrix = self.getTransformationMatrix()
-        return state  # x,y,yaw,v_x,v_y,v_yaw,e_x,e_y,e_yaw,e_vx,e_vy,e_vyaw,proxySensor0...proxySensor5
+        return True, state  # x,y,yaw,v_x,v_y,v_yaw,e_x,e_y,e_yaw,e_vx,e_vy,e_vyaw,proxySensor0...proxySensor5
 
     def getGroundTruthState(self, state):
         groundTruthState = state[:2]  # x and y positions
@@ -248,6 +250,7 @@ class MobRob:
         return transformationMat
 
     def getInvertedTransformationMatrix(self):
+        passed = True
         [_, _, retFloats, _, _] = vrep.simxCallScriptFunction(self.clientId, 'HelperScripts',
                                                               vrep.sim_scripttype_childscript,
                                                               'getInvertedMobRobMatrix', [], [], [],
@@ -256,7 +259,9 @@ class MobRob:
         invertedTransformationMat = np.matrix(retFloats).reshape((3, 4))
         invertedTransformationMat = np.transpose(invertedTransformationMat)
         invertedTransformationMat = np.delete(invertedTransformationMat, 3, 0)
-        return invertedTransformationMat
+        if invertedTransformationMat.size == 0:
+            passed = False
+        return passed, invertedTransformationMat
 
     def getLinearVelocityWrtRobotFrame(self, linearVelocities):
         return np.dot(self.invertedTransformationMatrix, linearVelocities)

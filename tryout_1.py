@@ -93,7 +93,10 @@ def main():
                 # print(action)
 
                 # take action in env:
-                next_state, reward, done = env.step(action, desiredState)
+                next_state, reward, done, passed = env.step(action, desiredState)
+                if ~passed:
+                    reason = 'FAILED   '
+                    break
                 replay_buffer.add((state, action, reward, next_state, float(done)))
                 state = next_state
 

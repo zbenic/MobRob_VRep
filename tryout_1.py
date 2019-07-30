@@ -65,6 +65,7 @@ def main():
             exit(-1)
 
         replay_buffer = ReplayBuffer()
+        replay_buffer.load()
 
         # logging variables:
         log_f = open("log.txt", "w+")

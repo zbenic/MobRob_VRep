@@ -66,9 +66,9 @@ class LabEnv:
         time.sleep(0.1)
         self.start()
         self.collision = False
-        state = self.mobRob.getState(desiredState)
+        passed, state = self.mobRob.getState(desiredState)
         # self.pause()
-        return state
+        return passed, state
 
     def computeReward(self, state, desiredState, action):
         done = False
@@ -90,7 +90,7 @@ class LabEnv:
         else:
             reward -= 2
 
-        if abs(state[4]) > abs(state[3]):
+        if state[4] > state[3]:
             reward -= 2
 
         if np.sign(action[0]) != np.sign(action[1]):

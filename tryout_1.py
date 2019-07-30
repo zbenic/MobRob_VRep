@@ -77,7 +77,7 @@ def main():
         avg_reward = 0
 
         for episode in range(episodes):
-            state = env.reset(desiredState)
+            passed, state = env.reset(desiredState)
             start_time = time.time()
             reason = ''
             episode_rewards = []

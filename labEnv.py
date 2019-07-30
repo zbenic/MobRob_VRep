@@ -90,7 +90,7 @@ class LabEnv:
         else:
             reward -= 2
 
-        if abs(state[4]) > abs(state[3]):
+        if state[4] > state[3]:
             reward -= 2
 
         if np.sign(action[0]) != np.sign(action[1]):

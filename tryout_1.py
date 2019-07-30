@@ -94,7 +94,7 @@ def main():
 
                 # take action in env:
                 next_state, reward, done, passed = env.step(action, desiredState)
-                if ~passed:
+                if not passed:
                     reason = 'FAILED   '
                     break
                 replay_buffer.add((state, action, reward, next_state, float(done)))
@@ -123,30 +123,34 @@ def main():
                         policy.update(replay_buffer, step, batch_size, gamma, polyak, policy_noise, noise_clip, policy_delay)
                     break
 
-            episode_reward = np.sum(episode_rewards)
-            min_score = np.min(episode_rewards)
-            max_score = np.max(episode_rewards)
-            total_rewards.append(episode_reward)
-            duration = time.time() - start_time
-            durations.append(duration)
-            save_rewards.append([total_rewards[episode], episode])
+            if reason != 'FAILED   ':
+                episode_reward = np.sum(episode_rewards)
+                min_score = np.min(episode_rewards)
+                max_score = np.max(episode_rewards)
+                total_rewards.append(episode_reward)
+                duration = time.time() - start_time
+                durations.append(duration)
+                save_rewards.append([total_rewards[episode], episode])
 
-            eta = np.mean(durations)*(episodes-episode) / 60 / 60
-            if eta < 1.0:
-                etaString = str(np.round(eta * 60, 2)) + " min"
+                eta = np.mean(durations)*(episodes-episode) / 60 / 60
+                if eta < 1.0:
+                    etaString = str(np.round(eta * 60, 2)) + " min"
+                else:
+                    etaString = str(np.round(eta, 2)) + " h"
+
+                # logging updates:
+                log_f.write('{},{}\n'.format(episode, episode_reward))
+                log_f.flush()
+
+                if len(total_rewards) >= log_interval:
+                    avg_reward = np.mean(total_rewards[-log_interval:])
+
+                print(
+                    '\rEpisode {}\t{}\tEpisode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tAvg_reward: {:.2f}\tDuration: {:.2f}\tETA: {}'
+                        .format(episode, reason, episode_reward, min_score, max_score, avg_reward, duration, etaString))
             else:
-                etaString = str(np.round(eta, 2)) + " h"
-
-            # logging updates:
-            log_f.write('{},{}\n'.format(episode, episode_reward))
-            log_f.flush()
-
-            if len(total_rewards) >= log_interval:
-                avg_reward = np.mean(total_rewards[-log_interval:])
-
-            print(
-                '\rEpisode {}\t{}\tEpisode reward: {:.2f}\tMin: {:.2f}\tMax: {:.2f}\tAvg_reward: {:.2f}\tDuration: {:.2f}\tETA: {}'
-                    .format(episode, reason, episode_reward, min_score, max_score, avg_reward, duration, etaString))
+                print('FAILED EPISODE!')
+                episodes += 1
 
             gc.collect()
 

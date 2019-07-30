@@ -256,11 +256,17 @@ class MobRob:
                                                               'getInvertedMobRobMatrix', [], [], [],
                                                               '',
                                                               vrep.simx_opmode_blocking)
-        invertedTransformationMat = np.matrix(retFloats).reshape((3, 4))
-        invertedTransformationMat = np.transpose(invertedTransformationMat)
-        invertedTransformationMat = np.delete(invertedTransformationMat, 3, 0)
-        if invertedTransformationMat.size == 0:
+
+        invertedTransformationMat = np.zeros(1)
+
+        try:
+            invertedTransformationMat = np.matrix(retFloats).reshape((3, 4))
+            invertedTransformationMat = np.transpose(invertedTransformationMat)
+            invertedTransformationMat = np.delete(invertedTransformationMat, 3, 0)
+        except ValueError:
             passed = False
+            invertedTransformationMat = np.zeros(1)
+
         return passed, invertedTransformationMat
 
     def getLinearVelocityWrtRobotFrame(self, linearVelocities):

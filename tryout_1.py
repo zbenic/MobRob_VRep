@@ -15,7 +15,7 @@ import gc
 
 def main():
     train = True
-    vrepHeadlessMode = False
+    vrepHeadlessMode = True
     simulate = True
     plot = True
 
@@ -96,7 +96,7 @@ def main():
                 # take action in env:
                 next_state, reward, done, passed = env.step(action, desiredState)
                 if not passed:
-                    reason = 'FAILED   '
+                    reason = 'FAILED'
                     break
                 replay_buffer.add((state, action, reward, next_state, float(done)))
                 state = next_state
@@ -124,14 +124,14 @@ def main():
                         policy.update(replay_buffer, step, batch_size, gamma, polyak, policy_noise, noise_clip, policy_delay)
                     break
 
-            if reason != 'FAILED   ':
+            if reason != 'FAILED':
                 episode_reward = np.sum(episode_rewards)
                 min_score = np.min(episode_rewards)
                 max_score = np.max(episode_rewards)
                 total_rewards.append(episode_reward)
                 duration = time.time() - start_time
                 durations.append(duration)
-                save_rewards.append([total_rewards[episode], episode])
+                save_rewards.append([episode_reward, episode])
 
                 eta = np.mean(durations)*(episodes-episode) / 60 / 60
                 if eta < 1.0:

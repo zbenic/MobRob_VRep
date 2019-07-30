@@ -120,10 +120,13 @@ class LabEnv:
         self.mobRob.setMotorsTargetVelocities(action)
         vrep.simxSynchronousTrigger(self.clientId)
         passed, state = self.mobRob.getState(desiredState)
-        groundTruthState = self.mobRob.getGroundTruthState(state)
-        # vrep.simxSynchronousTrigger(self.clientId)
-        self.getCollision()
-        reward, done = self.computeReward(groundTruthState, desiredState, action)
+        if passed:
+            groundTruthState = self.mobRob.getGroundTruthState(state)
+            self.getCollision()
+            reward, done = self.computeReward(groundTruthState, desiredState, action)
+        else:
+            reward = 0
+            done = False
 
         return state, reward, done, passed
 
@@ -199,7 +202,6 @@ class MobRob:
         state = np.append(state, velocities)   # TODO: just for test run
         # state = np.append(state, state - desiredState)  # error vector
         state = np.append(state, proxSensorReadings)
-        self.transformationMatrix = self.getTransformationMatrix()
         return True, state  # x,y,yaw,v_x,v_y,v_yaw,e_x,e_y,e_yaw,e_vx,e_vy,e_vyaw,proxySensor0...proxySensor5
 
     def getGroundTruthState(self, state):

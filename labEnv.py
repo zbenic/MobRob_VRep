@@ -15,17 +15,15 @@ except:
     print('')
 
 class LabEnv:
-    def __init__(self, mobRob, vrepHeadlessMode=False):
+    def __init__(self, mobRob, terminalState, actionBounds, vrepHeadlessMode=False):
         self.clientId = -1
         self.mobRob = mobRob
-        self.positionTolerance = 0.05
-        self.velocityTolerance = 0.01
-        self.yawTolerance = 0.05
-        self.yawRateTolerance = 0.1 # [rad/s]
         self.chassisCollisionHandle = -1
         self.headlessMode = vrepHeadlessMode
         self.init()
         self.collision = False
+        self.terminalState = terminalState
+        self.actionBounds = actionBounds
 
     def init(self):
         if self.headlessMode:
@@ -61,69 +59,51 @@ class LabEnv:
         self.mobRob.initDone()
         self.getCollision(vrep.simx_opmode_streaming)
 
-    def reset(self, desiredState):
+    def reset(self):
         self.stop()
         time.sleep(0.1)
         self.start()
         self.collision = False
-        passed, state = self.mobRob.getState(desiredState)
+        passed, state = self.mobRob.getState()
         # self.pause()
         return passed, state
 
-    def computeReward(self, state, desiredState, action):
+    def computeReward(self, state, action):
         done = False
-        reward = 0
-        # a = 1
-        # lamb = 0.75
-        # Lamb = np.diag([1, 0.75, 0.75, 0.25, 1])
-        # positionReward = 1 - norm(np.array(desiredState[:2]) - np.array(state[:2])) ** 0.4  # TODO: include yaw angle reward
-        # yawReward = 1 - abs(desiredState[2] - state[2]) ** 0.4
-        # velocityReward = (1 - max(norm(np.array(desiredState[3:5])-np.array(state[3:5])), self.velocityTolerance)) ** (1 / max(norm(np.array(desiredState[:2]) - np.array(state[:2])), self.positionTolerance))  # TODO: include yaw speed reward
-        # yawRateReward = (1 - max(abs(desiredState[5]-state[5]), self.yawRateTolerance)) ** (1 / max(abs(desiredState[2] - np.array(state[2])), self.yawTolerance))  # TODO: include yaw speed reward
-        # reward = positionReward * 10
-        # reward = lamb * np.exp(-1 / a**2 * np.transpose(state[:7] - desiredState).dot(state[:7] - desiredState))
-        # reward = positionReward * velocityReward
-        if state[3] > 0:
-            reward += 1
-        elif all(i == 0 for i in state[3:5]):
-            reward -= 4
-        else:
-            reward -= 2
 
-        if state[4] > state[3]:
-            reward -= 2
+        forwardRew = state[3]
 
-        if np.sign(action[0]) != np.sign(action[1]):
-            reward -= 2
+        lb, ub = self.actionBounds
+        scaling = (ub - lb) * 0.5
+        controlCost = 0.5 * 1e-2 * np.sum(np.square(action / scaling))
+        surviveReward = 0.05
+
+        reward = forwardRew - controlCost + surviveReward
+
+        if self.terminalStateAchieved(state):
+            reward += 100
+            done = True
 
         if self.collision:
             reward -= 50
-        if norm(np.array(desiredState[:2]) - np.array(state[:2])) < self.positionTolerance:
-            reward += 100
-            print("Position reached!")
-            done = True
-            # if norm(np.array(desiredState[3:5]) - np.array(state[3:5])) < self.velocityTolerance:
-            #     print("Speed reached!")
-            #     reward += 100
-            #     done = True
-            #     if abs(desiredState[3] - state[3]) < self.yawTolerance:
-            #         reward += 50
-            #         print("Yaw reached!")
-            #         # if abs(desiredState[5] - state[5]) < self.yawRateTolerance:
-            #         #     reward += 50
-            #         #     print("Yaw rate reached!")
-
 
         return reward, done
 
-    def step(self, action, desiredState):
+    def terminalStateAchieved(self, state):
+        if self.terminalState[0] <= state[0] <= self.terminalState[1] and \
+           self.terminalState[2] <= state[1] <= self.terminalState[3]:
+            return True
+        else:
+            return False
+
+    def step(self, action):
         self.mobRob.setMotorsTargetVelocities(action)
         vrep.simxSynchronousTrigger(self.clientId)
-        passed, state = self.mobRob.getState(desiredState)
+        passed, state = self.mobRob.getState()
         if passed:
             groundTruthState = self.mobRob.getGroundTruthState(state)
             self.getCollision()
-            reward, done = self.computeReward(groundTruthState, desiredState, action)
+            reward, done = self.computeReward(groundTruthState, action)
         else:
             reward = 0
             done = False
@@ -187,7 +167,7 @@ class MobRob:
     def calculateDistance(self, sensorReading):
         return norm(sensorReading)
 
-    def getState(self, desiredState, vrepMode=vrep.simx_opmode_buffer):
+    def getState(self, vrepMode=vrep.simx_opmode_buffer):
         passed, self.invertedTransformationMatrix = self.getInvertedTransformationMatrix()
         state = []
         if passed == False:

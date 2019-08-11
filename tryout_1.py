@@ -15,8 +15,8 @@ import gc
 
 def main():
     train = True
-    vrepHeadlessMode = True
-    simulate = True
+    vrepHeadlessMode = False
+    simulate = False
     plot = True
 
     ######### Hyperparameters #########
@@ -46,15 +46,16 @@ def main():
     action_dim = 2
     min_action = float(-2)
     max_action = float(2)
+    actionBounds = [min_action, max_action]
 
-    desiredState = [0.8, 0.7, -np.pi, 0.0, 0.0, 0.0]  # x, y, yawAngle, vx, vy, yawVelocity
+    terminalState = [0.65, 0.8, 0.5, 0.85]  # xMin, xMax, yMin, yMax
 
     if train:
         mobRob = MobRob(['MobRob'],
                         ['leftMotor', 'rightMotor'],
                         ['proximitySensor0', 'proximitySensor1', 'proximitySensor2', 'proximitySensor3', 'proximitySensor4',
                          'proximitySensor5'])
-        env = LabEnv(mobRob, vrepHeadlessMode)
+        env = LabEnv(mobRob, terminalState, actionBounds, vrepHeadlessMode)
 
         policy = TD3(lr, state_dim, action_dim, max_action)
 
@@ -65,7 +66,7 @@ def main():
             exit(-1)
 
         replay_buffer = ReplayBuffer()
-        replay_buffer.load()
+        # replay_buffer.load()
 
         # logging variables:
         log_f = open("log.txt", "w+")
@@ -78,7 +79,7 @@ def main():
         avg_reward = 0
 
         for episode in range(episodes):
-            passed, state = env.reset(desiredState)
+            passed, state = env.reset()
             start_time = time.time()
             reason = ''
             episode_rewards = []
@@ -94,7 +95,7 @@ def main():
                 # print(action)
 
                 # take action in env:
-                next_state, reward, done, passed = env.step(action, desiredState)
+                next_state, reward, done, passed = env.step(action)
                 if not passed:
                     reason = 'FAILED'
                     break
@@ -174,7 +175,7 @@ def main():
         random_seed = 0
         n_episodes = 3
         lr = 0.002
-        max_timesteps = 200
+        max_timesteps = 2000
 
         filename = "TD3_{}_{}".format(env_name, random_seed)
         # filename += '_solved'
@@ -184,7 +185,7 @@ def main():
                         ['leftMotor', 'rightMotor'],
                         ['proximitySensor0', 'proximitySensor1', 'proximitySensor2', 'proximitySensor3', 'proximitySensor4',
                          'proximitySensor5'])
-        env = LabEnv(mobRob, vrepHeadlessMode)
+        env = LabEnv(mobRob, terminalState, actionBounds, vrepHeadlessMode)
         policy = TD3(lr, state_dim, action_dim, max_action)
 
         if policy is not None:
@@ -197,10 +198,10 @@ def main():
 
         for episode in range(1, n_episodes + 1):
             ep_reward = 0
-            state = env.reset(desiredState)
+            _, state = env.reset()
             for step in range(max_timesteps):
                 action = policy.select_action(state)
-                state, reward, done = env.step(action, desiredState)
+                state, reward, done, _ = env.step(action)
                 ep_reward += reward
 
                 if done:

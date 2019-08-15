@@ -4,7 +4,7 @@ import sys, os
 
 sys.path.append("C:/visageGIT\TD3-PyTorch-BipedalWalker-v2")
 from TD3 import TD3
-from utils import ReplayBuffer
+from utils import ReplayBuffer, EnvironmentTiles
 
 import time
 import matplotlib.pyplot as plt
@@ -16,46 +16,58 @@ import gc
 def main():
     train = True
     vrepHeadlessMode = False
-    simulate = False
+    simulate = True
     plot = True
 
+    envLength = 2.5
+    envWidth = 2.0
+    envOriginCoordinate = [-0.5, -1.0]  # double T maze
+    tileSize = [0.1, 0.1]
+
     ######### Hyperparameters #########
-    env_name = "MobRob-Corridor"
+    # env_name = "MobRob-Corridor"
+    env_name = "MobRob-U_maze-working"
     log_interval = 10           # print avg reward after interval
     random_seed = 0
     gamma = 0.99                # discount for future rewards
     min_batch_size = 10000
     batch_size = 100            # num of transitions sampled from replay buffer
     lr = 0.001
-    exploration_noise = 0.1     # was 0.1
+    initial_exploration_noise = 0.5     # was 0.1
+    exploration_noise = 0.25
     polyak = 0.995              # target policy update parameter (1-tau)
     policy_noise = 0.2          # target policy smoothing noise
     noise_clip = 0.5
     policy_delay = 2            # delayed policy updates parameter
-    episodes = 10000         # max num of episodes
-    steps = 1000       # max timesteps in one episode
+    episodes = 10000            # max num of episodes
+    steps = 1000                # max timesteps in one episode
     iterations_per_step = 1
-    directory = "./preTrained/{}".format(env_name) # save trained models
+    directory = "./preTrained/{}".format(env_name)  # save trained models
     filename = "TD3_{}_{}".format(env_name, random_seed)
     ###################################
 
     if not os.path.isdir(directory):
         os.makedirs(directory)
 
-    state_dim = 12  # TODO: simulate battery? 6 are the number of proxy sensors    # x, y, vx, vy, v_yaw, prox 0 ... prox5
+    state_dim =12  # TODO: simulate battery? 6 are the number of proxy sensors    # x, y, vx, vy, v_yaw, prox 0 ... prox5
     action_dim = 2
     min_action = float(-2)
     max_action = float(2)
     actionBounds = [min_action, max_action]
 
-    terminalState = [0.65, 0.8, 0.5, 0.85]  # xMin, xMax, yMin, yMax
+    # terminalState = [1.65, 1.8, 0.5, 0.85]  # xMin, xMax, yMin, yMax  U_maze
+    terminalState = [-0.35, -0.15, 0.5, 0.85]  # xMin, xMax, yMin, yMax    double_T_maze
+
 
     if train:
+        environmentTiles = EnvironmentTiles(envWidth, envLength, envOriginCoordinate, tileSize)
+
         mobRob = MobRob(['MobRob'],
                         ['leftMotor', 'rightMotor'],
                         ['proximitySensor0', 'proximitySensor1', 'proximitySensor2', 'proximitySensor3', 'proximitySensor4',
                          'proximitySensor5'])
-        env = LabEnv(mobRob, terminalState, actionBounds, vrepHeadlessMode)
+
+        env = LabEnv(mobRob, terminalState, actionBounds, environmentTiles, vrepHeadlessMode)
 
         policy = TD3(lr, state_dim, action_dim, max_action)
 
@@ -84,12 +96,17 @@ def main():
             reason = ''
             episode_rewards = []
             finished_episode = False
+            log_f.write('Episode {}\n'.format(episode))
+            environmentTiles.reset()
             for step in range(steps+1):
                 total_num_of_steps += 1
 
                 # select action and add exploration noise:
                 action = policy.select_action(state)
-                action = action + np.random.normal(0, exploration_noise, size=action_dim)
+                if replay_buffer.size < min_batch_size:
+                    action = action + np.random.normal(0, initial_exploration_noise, size=action_dim)
+                else:
+                    action = action + np.random.normal(0, exploration_noise, size=action_dim)
                 action = action.clip(min_action, max_action)
                 actions[episode][step] = action
                 # print(action)
@@ -100,6 +117,7 @@ def main():
                     reason = 'FAILED'
                     break
                 replay_buffer.add((state, action, reward, next_state, float(done)))
+                # log_f.write('  Step: {} vx: {} vy: {} Resultant speed: {} yawRate: {} Step reward: {}\n'.format(step, state[0], state[1], np.linalg.norm(state[:2]), state[2], reward))
                 state = next_state
 
                 episode_rewards.append(reward)
@@ -141,7 +159,7 @@ def main():
                     etaString = str(np.round(eta, 2)) + " h"
 
                 # logging updates:
-                log_f.write('{},{}\n'.format(episode, episode_reward))
+                log_f.write('  Episode reward: {}\n'.format(episode_reward))
                 log_f.flush()
 
                 if len(total_rewards) >= log_interval:
@@ -181,11 +199,12 @@ def main():
         # filename += '_solved'
         directory = "./preTrained/{}".format(env_name)
 
+        environmentTiles = EnvironmentTiles(envWidth, envLength, envOriginCoordinate, tileSize)
         mobRob = MobRob(['MobRob'],
                         ['leftMotor', 'rightMotor'],
                         ['proximitySensor0', 'proximitySensor1', 'proximitySensor2', 'proximitySensor3', 'proximitySensor4',
                          'proximitySensor5'])
-        env = LabEnv(mobRob, terminalState, actionBounds, vrepHeadlessMode)
+        env = LabEnv(mobRob, terminalState, actionBounds, environmentTiles, vrepHeadlessMode)
         policy = TD3(lr, state_dim, action_dim, max_action)
 
         if policy is not None:

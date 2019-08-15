@@ -15,7 +15,7 @@ except:
     print('')
 
 class LabEnv:
-    def __init__(self, mobRob, terminalState, actionBounds, vrepHeadlessMode=False):
+    def __init__(self, mobRob, terminalState, actionBounds, environmentTiles, vrepHeadlessMode=False):
         self.clientId = -1
         self.mobRob = mobRob
         self.chassisCollisionHandle = -1
@@ -24,12 +24,14 @@ class LabEnv:
         self.collision = False
         self.terminalState = terminalState
         self.actionBounds = actionBounds
+        self.environmentTiles = environmentTiles
+        self.epsilon = 0.01
 
     def init(self):
         if self.headlessMode:
-            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneComplex.ttt'])
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneDoubleT.ttt'])
         else:
-            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneComplex.ttt'])
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneDoubleT.ttt'])
 
         time.sleep(10)
         print('Simulation started')
@@ -69,16 +71,30 @@ class LabEnv:
         return passed, state
 
     def computeReward(self, state, action):
+        #  state -> x,y,yaw,v_x,v_y,v_yaw,proxySensor0...proxySensor5
         done = False
 
-        forwardRew = state[3]
+        reward = state[3] * 1.5
 
-        lb, ub = self.actionBounds
-        scaling = (ub - lb) * 0.5
-        controlCost = 0.5 * 1e-2 * np.sum(np.square(action / scaling))
-        surviveReward = 0.05
+        # lb, ub = self.actionBounds
+        # scaling = (ub - lb) * 0.5
+        # controlCost = 0.5 * 1e-2 * np.sum(np.square(action / scaling))
+        # surviveReward = 0.05
 
-        reward = forwardRew - controlCost + surviveReward
+        # reward = forwardRew + surviveReward
+
+        # reward -= np.square(state[2])
+        # print(str(state[5]) + " " + str(0.5 * 1e-2 * np.square(state[5])))
+
+        if self.environmentTiles.tileVisited() and self.environmentTiles.agentLeftTile() and not self.environmentTiles.getTileEvaluationStatus():
+            reward -= 5
+            self.environmentTiles.setTileEvaluated()
+
+        if np.linalg.norm(state[3:5]) <= self.epsilon:
+            reward -= np.linalg.norm(state[3:5])
+
+        if np.sign(action[0]) != np.sign(action[1]):
+            reward -= 0.5
 
         if self.terminalStateAchieved(state):
             reward += 100
@@ -100,10 +116,10 @@ class LabEnv:
         self.mobRob.setMotorsTargetVelocities(action)
         vrep.simxSynchronousTrigger(self.clientId)
         passed, state = self.mobRob.getState()
+        self.environmentTiles.updateTiles(state[:2])
         if passed:
-            groundTruthState = self.mobRob.getGroundTruthState(state)
             self.getCollision()
-            reward, done = self.computeReward(groundTruthState, action)
+            reward, done = self.computeReward(state, action)
         else:
             reward = 0
             done = False
@@ -136,8 +152,8 @@ class MobRob:
         self.robotName = robotName
         self.motorsNaming = motorsNaming
         self.proxSensorsNaming = proxSensorsNaming
-        self.minProxSensorDistance = 0.1
-        self.maxProxSensorDistance = 0.8
+        self.minProxSensorDistance = 0
+        self.maxProxSensorDistance = 2
         self.mobRobHandle = -1
         self.transformationMatrix = []
         self.invertedTransformationMatrix = []
@@ -177,12 +193,12 @@ class MobRob:
         position = self.getPosition(vrepMode)
         orientation = self.getOrientation(vrepMode)
         velocities = self.getVelocities(vrepMode)
-        state = np.append(state, position)  # TODO: just for test run
-        state = np.append(state, orientation)
-        state = np.append(state, velocities)   # TODO: just for test run
-        # state = np.append(state, state - desiredState)  # error vector
+        state = np.append(state, position)  # x,y
+        state = np.append(state, orientation)  # yaw
+        state = np.append(state, velocities)   # v_x,v_y,v_yaw
+        # state = np.append(state, state - desiredState)  # e_x,e_y,e_yaw,e_vx,e_vy,e_vyaw -> error vector
         state = np.append(state, proxSensorReadings)
-        return True, state  # x,y,yaw,v_x,v_y,v_yaw,e_x,e_y,e_yaw,e_vx,e_vy,e_vyaw,proxySensor0...proxySensor5
+        return True, state  # x,y,yaw,v_x,v_y,v_yaw,proxySensor0...proxySensor5
 
     def getGroundTruthState(self, state):
         groundTruthState = state[:2]  # x and y positions

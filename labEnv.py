@@ -70,7 +70,7 @@ class LabEnv:
         # self.pause()
         return passed, state
 
-    def computeReward(self, state, action):
+    def computeReward(self, state, action, useEnvTiles=False):
         #  state -> x,y,yaw,v_x,v_y,v_yaw,proxySensor0...proxySensor5
         done = False
 
@@ -86,9 +86,10 @@ class LabEnv:
         # reward -= np.square(state[2])
         # print(str(state[5]) + " " + str(0.5 * 1e-2 * np.square(state[5])))
 
-        if self.environmentTiles.tileVisited() and self.environmentTiles.agentLeftTile() and not self.environmentTiles.getTileEvaluationStatus():
-            reward -= 20
-            self.environmentTiles.setTileEvaluated()
+        if useEnvTiles:
+            if self.environmentTiles.tileVisited() and self.environmentTiles.agentLeftTile() and not self.environmentTiles.getTileEvaluationStatus():
+                reward -= 20
+                self.environmentTiles.setTileEvaluated()
 
         if np.linalg.norm(state[3:5]) <= self.epsilon:
             reward -= np.linalg.norm(state[3:5])

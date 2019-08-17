@@ -29,9 +29,9 @@ class LabEnv:
 
     def init(self):
         if self.headlessMode:
-            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneDoubleT.ttt'])
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', "-h", '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneT.ttt'])
         else:
-            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneDoubleT.ttt'])
+            subprocess.Popen(['C:/Program Files/V-REP3/V-REP_PRO_EDU/vrep.exe', '-gREMOTEAPISERVERSERVICE_19997_FALSE_TRUE', 'C:/visageGIT/MobRob_VRep/Scene/labSceneT.ttt'])
 
         time.sleep(10)
         print('Simulation started')
@@ -87,7 +87,7 @@ class LabEnv:
         # print(str(state[5]) + " " + str(0.5 * 1e-2 * np.square(state[5])))
 
         if self.environmentTiles.tileVisited() and self.environmentTiles.agentLeftTile() and not self.environmentTiles.getTileEvaluationStatus():
-            reward -= 5
+            reward -= 20
             self.environmentTiles.setTileEvaluated()
 
         if np.linalg.norm(state[3:5]) <= self.epsilon:

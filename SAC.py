@@ -114,7 +114,7 @@ class SAC():
         dist = Normal(mu, sigma)
         z = dist.sample()
         action = torch.tanh(z).detach().cpu().numpy()
-        return action  # return a scalar, float32
+        return action
 
     def store(self, s, a, r, s_, d):
         index = self.num_transition % self.capacity
